@@ -30,6 +30,10 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             addSonarrButton: "+ Add Sonarr server",
             addRadarrButton: "+ Add Radarr server",
             instanceNameLabel: "Name",
+            trailerLanguagesLabel: "Trailer languages (optional)",
+            trailerLanguagesDescription: "Comma-separated language codes in order of preference, e.g. \"de\" or \"ja\" for anime. Empty uses the badge language. If none is found, English and then the original language are tried.",
+            subtitleLanguagesLabel: "Trailer subtitles (optional)",
+            subtitleLanguagesDescription: "Language codes of subtitles to save with the trailer, e.g. \"de\". Only subtitles uploaded with the YouTube video are used, never automatic ones.",
             enabledLabel: "Enabled",
             serverUrlLabel: "Server URL",
             sonarrUrlDescription: "Base URL of your Sonarr server, e.g. http://localhost:8989.",
@@ -59,6 +63,8 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             trailerAsMainVideoDescription: "Pressing Play on an entry starts its trailer. Entries without a trailer keep the short placeholder. When off, the trailer is available through Emby's \"Trailer\" button instead.",
             ytDlpPathLabel: "yt-dlp path",
             ytDlpDescription: "Default \"yt-dlp\" tries PATH first, then auto-downloads a standalone copy into the plugin's own data folder if not found - works regardless of which Docker image is used.",
+            jsRuntimeLabel: "JavaScript runtime for YouTube (optional)",
+            jsRuntimeDescription: "yt-dlp needs a JavaScript runtime to download from YouTube. Leave empty to use deno from PATH or auto-download it into the plugin's data folder. Enter a path to a deno binary, or e.g. \"node:/usr/bin/node\" or \"quickjs:/usr/bin/qjs\" to use another runtime.",
             ffmpegPathLabel: "ffmpeg path (optional)",
             ffmpegDescription: "Leave empty to download a ready-to-play trailer (up to 720p) with no ffmpeg needed. Set a path to a modern ffmpeg only if you want higher-resolution merged trailers.",
             languageSummary: "Appearance",
@@ -108,6 +114,10 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             addSonarrButton: "+ Sonarr-Server hinzufügen",
             addRadarrButton: "+ Radarr-Server hinzufügen",
             instanceNameLabel: "Name",
+            trailerLanguagesLabel: "Trailer-Sprachen (optional)",
+            trailerLanguagesDescription: "Sprachcodes mit Komma getrennt, in gewünschter Reihenfolge, z.B. \"de\" oder \"ja\" für Animes. Leer verwendet die Badge-Sprache. Wird nichts gefunden, wird Englisch und danach die Originalsprache versucht.",
+            subtitleLanguagesLabel: "Trailer-Untertitel (optional)",
+            subtitleLanguagesDescription: "Sprachcodes der Untertitel, die mit dem Trailer gespeichert werden, z.B. \"de\". Es werden nur Untertitel verwendet, die mit dem YouTube-Video hochgeladen wurden, nie automatisch erzeugte.",
             enabledLabel: "Aktiviert",
             serverUrlLabel: "Server-URL",
             sonarrUrlDescription: "Basis-URL deines Sonarr-Servers, z.B. http://localhost:8989.",
@@ -137,6 +147,8 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             trailerAsMainVideoDescription: "Beim Abspielen eines Eintrags startet dessen Trailer. Einträge ohne Trailer behalten das kurze Platzhaltervideo. Ist die Option aus, ist der Trailer stattdessen über Embys \"Trailer\"-Schaltfläche erreichbar.",
             ytDlpPathLabel: "yt-dlp-Pfad",
             ytDlpDescription: "Standard \"yt-dlp\" versucht zuerst PATH, lädt bei Bedarf automatisch eine eigene Kopie in den Plugin-Datenordner herunter - funktioniert unabhängig vom verwendeten Docker-Image.",
+            jsRuntimeLabel: "JavaScript-Runtime für YouTube (optional)",
+            jsRuntimeDescription: "yt-dlp braucht eine JavaScript-Runtime, um von YouTube herunterzuladen. Leer lassen, um deno aus PATH zu verwenden oder automatisch in den Plugin-Datenordner herunterzuladen. Pfad zu einer deno-Datei eintragen, oder z.B. \"node:/usr/bin/node\" bzw. \"quickjs:/usr/bin/qjs\" für eine andere Runtime.",
             ffmpegPathLabel: "ffmpeg-Pfad (optional)",
             ffmpegDescription: "Leer lassen, um einen fertig abspielbaren Trailer (bis 720p) ohne ffmpeg herunterzuladen. Pfad zu einem modernen ffmpeg nur setzen, wenn höher aufgelöste, zusammengeführte Trailer gewünscht sind.",
             languageSummary: "Darstellung",
@@ -207,6 +219,8 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             view.querySelector('#CsTrailerAsMainVideoDescription').textContent = s.trailerAsMainVideoDescription;
             view.querySelector('#YtDlpPath').setAttribute('label', s.ytDlpPathLabel);
             view.querySelector('#CsYtDlpDescription').textContent = s.ytDlpDescription;
+            view.querySelector('#JsRuntimePath').setAttribute('label', s.jsRuntimeLabel);
+            view.querySelector('#CsJsRuntimeDescription').textContent = s.jsRuntimeDescription;
             view.querySelector('#FfmpegPath').setAttribute('label', s.ffmpegPathLabel);
             view.querySelector('#CsFfmpegDescription').textContent = s.ffmpegDescription;
 
@@ -373,7 +387,9 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
                 Name: count ? kind + ' ' + (count + 1) : kind,
                 Enabled: true,
                 Url: 'http://localhost:' + defaultPorts[kind],
-                ApiKey: ''
+                ApiKey: '',
+                TrailerLanguages: '',
+                SubtitleLanguages: ''
             };
         }
 
@@ -383,12 +399,18 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             var saved = config[kind + 'Instances'];
             if (saved && saved.length) {
                 return saved.map(function (i) {
-                    return { Name: i.Name || '', Enabled: i.Enabled !== false, Url: i.Url || '', ApiKey: i.ApiKey || '' };
+                    return {
+                        Name: i.Name || '', Enabled: i.Enabled !== false, Url: i.Url || '', ApiKey: i.ApiKey || '',
+                        TrailerLanguages: i.TrailerLanguages || '', SubtitleLanguages: i.SubtitleLanguages || ''
+                    };
                 });
             }
 
             if (config[kind + 'Enabled'] || config[kind + 'ApiKey']) {
-                return [{ Name: kind, Enabled: !!config[kind + 'Enabled'], Url: config[kind + 'Url'] || '', ApiKey: config[kind + 'ApiKey'] || '' }];
+                return [{
+                    Name: kind, Enabled: !!config[kind + 'Enabled'], Url: config[kind + 'Url'] || '', ApiKey: config[kind + 'ApiKey'] || '',
+                    TrailerLanguages: '', SubtitleLanguages: ''
+                }];
             }
 
             return [];
@@ -445,6 +467,10 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
                     function (v) { instance.Url = v; }, s[kind.toLowerCase() + 'UrlDescription']));
                 row.appendChild(buildTextInput('password', s.apiKeyLabel, instance.ApiKey,
                     function (v) { instance.ApiKey = v; }, s[kind.toLowerCase() + 'ApiKeyDescription']));
+                row.appendChild(buildTextInput('text', s.trailerLanguagesLabel, instance.TrailerLanguages,
+                    function (v) { instance.TrailerLanguages = v; }, s.trailerLanguagesDescription));
+                row.appendChild(buildTextInput('text', s.subtitleLanguagesLabel, instance.SubtitleLanguages,
+                    function (v) { instance.SubtitleLanguages = v; }, s.subtitleLanguagesDescription));
 
                 var testResult = document.createElement('div');
                 testResult.className = 'fieldDescription';
@@ -629,6 +655,7 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
                 view.querySelector('#DownloadTrailersLocally').checked = config.DownloadTrailersLocally;
                 view.querySelector('#TrailerAsMainVideo').checked = config.TrailerAsMainVideo !== false;
                 view.querySelector('#YtDlpPath').value = config.YtDlpPath || 'yt-dlp';
+                view.querySelector('#JsRuntimePath').value = config.JsRuntimePath || '';
                 view.querySelector('#FfmpegPath').value = config.FfmpegPath || '';
 
                 // Deduplicate by name so any duplicates left by the old config-growth bug are
@@ -655,7 +682,10 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
         function buildConfigFromForm(config) {
             ['Sonarr', 'Radarr'].forEach(function (kind) {
                 config[kind + 'Instances'] = currentInstances[kind].map(function (i) {
-                    return { Name: (i.Name || '').trim(), Enabled: i.Enabled, Url: (i.Url || '').trim(), ApiKey: (i.ApiKey || '').trim() };
+                    return {
+                        Name: (i.Name || '').trim(), Enabled: i.Enabled, Url: (i.Url || '').trim(), ApiKey: (i.ApiKey || '').trim(),
+                        TrailerLanguages: (i.TrailerLanguages || '').trim(), SubtitleLanguages: (i.SubtitleLanguages || '').trim()
+                    };
                 });
                 // The instance list is authoritative from now on; switching the old single-server
                 // fields off keeps a deliberately emptied list from falling back to them.
@@ -670,6 +700,7 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             config.DownloadTrailersLocally = view.querySelector('#DownloadTrailersLocally').checked;
             config.TrailerAsMainVideo = view.querySelector('#TrailerAsMainVideo').checked;
             config.YtDlpPath = view.querySelector('#YtDlpPath').value;
+            config.JsRuntimePath = view.querySelector('#JsRuntimePath').value.trim();
             config.FfmpegPath = view.querySelector('#FfmpegPath').value;
 
             config.Lists = currentLists.map(function (l) {

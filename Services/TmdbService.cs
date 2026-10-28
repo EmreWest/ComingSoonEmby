@@ -37,26 +37,26 @@ namespace ComingSoonPlugin.Services
 
         private bool HasApiKey => !string.IsNullOrWhiteSpace(_apiKey);
 
-        public async Task<MetadataResult?> GetMovieMetadataAsync(int tmdbId, CancellationToken cancellationToken)
+        public async Task<MetadataResult?> GetMovieMetadataAsync(
+            int tmdbId, IReadOnlyList<string> trailerLanguages, CancellationToken cancellationToken)
         {
             if (!HasApiKey)
             {
                 return null;
             }
 
-            var url = $"{BaseUrl}/movie/{tmdbId}?api_key={_apiKey}&language={_language}&append_to_response=credits,videos";
-            return await FetchAndMapAsync(url, cancellationToken).ConfigureAwait(false);
+            return await FetchAndMapAsync("movie", tmdbId, trailerLanguages, cancellationToken).ConfigureAwait(false);
         }
 
-        public async Task<MetadataResult?> GetSeriesMetadataAsync(int tmdbTvId, CancellationToken cancellationToken)
+        public async Task<MetadataResult?> GetSeriesMetadataAsync(
+            int tmdbTvId, IReadOnlyList<string> trailerLanguages, CancellationToken cancellationToken)
         {
             if (!HasApiKey)
             {
                 return null;
             }
 
-            var url = $"{BaseUrl}/tv/{tmdbTvId}?api_key={_apiKey}&language={_language}&append_to_response=credits,videos";
-            return await FetchAndMapAsync(url, cancellationToken).ConfigureAwait(false);
+            return await FetchAndMapAsync("tv", tmdbTvId, trailerLanguages, cancellationToken).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -164,8 +164,19 @@ namespace ComingSoonPlugin.Services
             return result?.TvResults?.FirstOrDefault()?.Id;
         }
 
-        private async Task<MetadataResult?> FetchAndMapAsync(string url, CancellationToken cancellationToken)
+        /// <summary>
+        /// Fetches details, cast and videos in one request. The trailer is picked by language:
+        /// the requested languages in order, then English, then the title's original language
+        /// (e.g. a Japanese PV for an anime), which needs a second request since TMDB only returns
+        /// videos in the languages asked for.
+        /// </summary>
+        private async Task<MetadataResult?> FetchAndMapAsync(
+            string kind, int id, IReadOnlyList<string> trailerLanguages, CancellationToken cancellationToken)
         {
+            var videoLanguages = trailerLanguages.Append("en").Distinct().ToList();
+            var url = $"{BaseUrl}/{kind}/{id}?api_key={_apiKey}&language={_language}&append_to_response=credits,videos" +
+                      $"&include_video_language={string.Join(",", videoLanguages)}";
+
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
@@ -182,11 +193,13 @@ namespace ComingSoonPlugin.Services
                 return null;
             }
 
-            var trailer = dto.Videos?.Results?
-                .Where(v => string.Equals(v.Site, "YouTube", StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(v => string.Equals(v.Type, "Trailer", StringComparison.OrdinalIgnoreCase))
-                .ThenByDescending(v => v.Official)
-                .FirstOrDefault();
+            var trailer = PickTrailer(dto.Videos?.Results, videoLanguages);
+            var originalLanguage = dto.OriginalLanguage?.Trim().ToLowerInvariant();
+            if (trailer is null && !string.IsNullOrEmpty(originalLanguage) && !videoLanguages.Contains(originalLanguage))
+            {
+                var originalVideos = await FetchVideosAsync(kind, id, originalLanguage, cancellationToken).ConfigureAwait(false);
+                trailer = PickTrailer(originalVideos, new[] { originalLanguage });
+            }
 
             return new MetadataResult
             {
@@ -194,6 +207,7 @@ namespace ComingSoonPlugin.Services
                 PosterUrl = string.IsNullOrEmpty(dto.PosterPath) ? null : ImageBaseUrl + dto.PosterPath,
                 BackdropUrl = string.IsNullOrEmpty(dto.BackdropPath) ? null : BackdropImageBaseUrl + dto.BackdropPath,
                 TrailerYoutubeKey = trailer?.Key,
+                TrailerLanguage = trailer?.Language,
                 Cast = dto.Credits?.Cast?
                     .OrderBy(c => c.Order)
                     .Take(10)
@@ -205,6 +219,59 @@ namespace ComingSoonPlugin.Services
                     })
                     .ToList() ?? new List<CastMember>()
             };
+        }
+
+        // First language with a YouTube video wins; within it a "Trailer" beats teasers/clips and
+        // an official upload beats a fan upload.
+        private static TmdbVideoDto? PickTrailer(IEnumerable<TmdbVideoDto>? videos, IEnumerable<string> languages)
+        {
+            var youtube = videos?
+                .Where(v => string.Equals(v.Site, "YouTube", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(v.Key))
+                .ToList();
+            if (youtube is not { Count: > 0 })
+            {
+                return null;
+            }
+
+            foreach (var language in languages)
+            {
+                var match = youtube
+                    .Where(v => string.Equals(v.Language, language, StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(v => string.Equals(v.Type, "Trailer", StringComparison.OrdinalIgnoreCase))
+                    .ThenByDescending(v => v.Official)
+                    .FirstOrDefault();
+                if (match is not null)
+                {
+                    return match;
+                }
+            }
+
+            return null;
+        }
+
+        private async Task<List<TmdbVideoDto>?> FetchVideosAsync(
+            string kind, int id, string language, CancellationToken cancellationToken)
+        {
+            var url = $"{BaseUrl}/{kind}/{id}/videos?api_key={_apiKey}&language={language}&include_video_language={language}";
+
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogWarning("TMDB video lookup failed ({Status}): {Url}", response.StatusCode, RedactApiKey(url));
+                    return null;
+                }
+
+                var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                return JsonSerializer.Deserialize<TmdbVideosDto>(json, JsonOptions)?.Results;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning(ex, "TMDB video lookup failed: {Url}", RedactApiKey(url));
+                return null;
+            }
         }
 
         private static string RedactApiKey(string url) =>
@@ -227,6 +294,9 @@ namespace ComingSoonPlugin.Services
 
             [JsonPropertyName("backdrop_path")]
             public string? BackdropPath { get; set; }
+
+            [JsonPropertyName("original_language")]
+            public string? OriginalLanguage { get; set; }
 
             public TmdbCreditsDto? Credits { get; set; }
             public TmdbVideosDto? Videos { get; set; }
@@ -259,6 +329,9 @@ namespace ComingSoonPlugin.Services
             public string? Site { get; set; }
             public string? Type { get; set; }
             public bool Official { get; set; }
+
+            [JsonPropertyName("iso_639_1")]
+            public string? Language { get; set; }
         }
 
         private class TmdbFindResponse

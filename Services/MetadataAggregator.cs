@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using ComingSoonPlugin.Models;
@@ -22,22 +23,24 @@ namespace ComingSoonPlugin.Services
             _logger = logger;
         }
 
-        public async Task<MetadataResult> GetForMovieAsync(int tmdbId, CancellationToken cancellationToken)
+        public async Task<MetadataResult> GetForMovieAsync(
+            int tmdbId, IReadOnlyList<string> trailerLanguages, CancellationToken cancellationToken)
         {
             var embyResult = await _embyProvider.TryGetMovieMetadataAsync(tmdbId, cancellationToken).ConfigureAwait(false);
-            var tmdbResult = await _tmdb.GetMovieMetadataAsync(tmdbId, cancellationToken).ConfigureAwait(false);
+            var tmdbResult = await _tmdb.GetMovieMetadataAsync(tmdbId, trailerLanguages, cancellationToken).ConfigureAwait(false);
 
             return Merge(embyResult, tmdbResult);
         }
 
-        public async Task<MetadataResult> GetForSeriesAsync(int tvdbId, CancellationToken cancellationToken)
+        public async Task<MetadataResult> GetForSeriesAsync(
+            int tvdbId, IReadOnlyList<string> trailerLanguages, CancellationToken cancellationToken)
         {
             var embyResult = await _embyProvider.TryGetSeriesMetadataAsync(tvdbId, cancellationToken).ConfigureAwait(false);
 
             // TMDB needs its own tv id, not tvdbId directly - bridge via /find.
             var tmdbTvId = await _tmdb.FindTmdbTvIdByTvdbIdAsync(tvdbId, cancellationToken).ConfigureAwait(false);
             var tmdbResult = tmdbTvId.HasValue
-                ? await _tmdb.GetSeriesMetadataAsync(tmdbTvId.Value, cancellationToken).ConfigureAwait(false)
+                ? await _tmdb.GetSeriesMetadataAsync(tmdbTvId.Value, trailerLanguages, cancellationToken).ConfigureAwait(false)
                 : null;
 
             if (!tmdbTvId.HasValue)
@@ -56,7 +59,8 @@ namespace ComingSoonPlugin.Services
                 PosterUrl = FirstNonEmpty(fallback?.PosterUrl, primary?.PosterUrl), // TMDB poster preferred
                 BackdropUrl = fallback?.BackdropUrl, // TMDB only
                 Cast = (primary?.Cast?.Count ?? 0) > 0 ? primary!.Cast : (fallback?.Cast ?? new()),
-                TrailerYoutubeKey = fallback?.TrailerYoutubeKey // TMDB only
+                TrailerYoutubeKey = fallback?.TrailerYoutubeKey, // TMDB only
+                TrailerLanguage = fallback?.TrailerLanguage
             };
         }
 

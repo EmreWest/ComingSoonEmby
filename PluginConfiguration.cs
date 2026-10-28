@@ -59,7 +59,29 @@ namespace ComingSoonPlugin
         public string Url { get; set; } = string.Empty;
         public string ApiKey { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Trailer languages for this server's titles, as comma-separated ISO 639-1 codes in order
+        /// of preference (e.g. "ja" for an anime Sonarr). Empty uses the plugin language. English
+        /// and then the title's original language are always tried before giving up.
+        /// </summary>
+        public string TrailerLanguages { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Uploaded (never automatic) YouTube subtitles to save with the trailer, as comma-separated
+        /// ISO 639-1 codes (e.g. "de"). Empty saves none.
+        /// </summary>
+        public string SubtitleLanguages { get; set; } = string.Empty;
+
         public string DisplayName => string.IsNullOrWhiteSpace(Name) ? Url : Name;
+
+        /// <summary>Parses "de, ja;EN" into ["de", "ja", "en"], dropping anything that isn't a language code.</summary>
+        public static List<string> ParseLanguages(string? value) =>
+            (value ?? string.Empty)
+                .Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(l => l.ToLowerInvariant())
+                .Where(l => l.Length is 2 or 3 && l.All(char.IsAsciiLetter))
+                .Distinct()
+                .ToList();
     }
 
     /// <summary>Persisted plugin settings, edited via the Dashboard config page.</summary>
@@ -151,6 +173,13 @@ namespace ComingSoonPlugin
         /// to auto-downloading a standalone copy into the plugin's own data folder if not found.
         /// </summary>
         public string YtDlpPath { get; set; } = "yt-dlp";
+
+        /// <summary>
+        /// JavaScript runtime yt-dlp uses for YouTube. Empty (default) uses deno from PATH or
+        /// auto-downloads it into the plugin's data folder. A path is treated as a deno binary;
+        /// "node:/path", "bun:/path" or "quickjs:/path" select another runtime.
+        /// </summary>
+        public string JsRuntimePath { get; set; } = string.Empty;
 
         /// <summary>
         /// Path to an ffmpeg executable, used by yt-dlp for remuxing. Empty (default) uses

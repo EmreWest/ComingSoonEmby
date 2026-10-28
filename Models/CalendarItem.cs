@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace ComingSoonPlugin.Models
 {
@@ -50,6 +51,12 @@ namespace ComingSoonPlugin.Models
 
         /// <summary>YouTube trailer id as returned by Radarr, used when TMDB has none (or no TMDB key is set).</summary>
         public string? TrailerYoutubeKey { get; set; }
+
+        /// <summary>Preferred trailer languages of the Sonarr/Radarr instance this item came from.</summary>
+        public List<string> TrailerLanguages { get; set; } = new();
+
+        /// <summary>Uploaded subtitle languages to save with the trailer, from the same instance.</summary>
+        public List<string> SubtitleLanguages { get; set; } = new();
 
         /// <summary>Shallow copy - used to give the same underlying movie a different resolved Date per list.</summary>
         public CalendarItem Clone() => (CalendarItem)MemberwiseClone();

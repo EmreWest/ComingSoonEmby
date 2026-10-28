@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -28,14 +29,17 @@ namespace ComingSoonPlugin.Services
         private readonly string _ytDlpPath;
         private readonly string _ffmpegPath;
         private readonly string _workingDirectory;
+        private readonly JsRuntime? _jsRuntime;
         private static readonly TimeSpan ProcessTimeout = TimeSpan.FromMinutes(5);
 
-        public TrailerDownloader(ILogger logger, string ytDlpPath, string ffmpegPath, string workingDirectory)
+        public TrailerDownloader(
+            ILogger logger, string ytDlpPath, string ffmpegPath, string workingDirectory, JsRuntime? jsRuntime = null)
         {
             _logger = logger;
             _ytDlpPath = string.IsNullOrWhiteSpace(ytDlpPath) ? "yt-dlp" : ytDlpPath;
             _ffmpegPath = string.IsNullOrWhiteSpace(ffmpegPath) ? "ffmpeg" : ffmpegPath;
             _workingDirectory = workingDirectory;
+            _jsRuntime = jsRuntime;
         }
 
         /// <summary>Removes staging folders left behind by a refresh that was interrupted.</summary>
@@ -76,9 +80,118 @@ namespace ComingSoonPlugin.Services
             string outputPath,
             CancellationToken cancellationToken)
         {
-            var youtubeUrl = $"https://www.youtube.com/watch?v={youtubeKey}";
             var stagingDirectory = CreateStagingDirectory();
             var stagedPath = Path.Combine(stagingDirectory, TrailerFileName);
+
+            try
+            {
+                var haveFfmpeg = HasUsableFfmpeg(_ffmpegPath);
+
+                // Prefer a progressive (already-muxed, single-file) stream so no ffmpeg merge is
+                // needed - YouTube serves progressive mp4 up to 720p, plenty for a trailer, and it
+                // works even when ffmpeg is missing or too old. Only fall back to separate streams
+                // (which need ffmpeg to merge) when a usable ffmpeg is available.
+                var arguments = new List<string>
+                {
+                    "-f",
+                    haveFfmpeg
+                        ? "best[ext=mp4][vcodec!=none][acodec!=none]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+                        : "best[ext=mp4][vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]/best"
+                };
+
+                if (haveFfmpeg)
+                {
+                    arguments.AddRange(new[] { "--ffmpeg-location", _ffmpegPath, "--merge-output-format", "mp4" });
+                }
+
+                arguments.AddRange(new[] { "-o", stagedPath });
+
+                if (!await RunAsync(arguments, youtubeKey, cancellationToken).ConfigureAwait(false))
+                {
+                    return null;
+                }
+
+                if (!File.Exists(stagedPath))
+                {
+                    _logger.LogWarning("yt-dlp reported success but output file is missing: {Path}", stagedPath);
+                    return null;
+                }
+
+                return Publish(stagedPath, outputPath);
+            }
+            finally
+            {
+                TryDeleteDirectory(stagingDirectory);
+            }
+        }
+
+        /// <summary>
+        /// Downloads the video's uploaded subtitles in the given languages (ISO 639-1, e.g. "de")
+        /// next to videoPath as "&lt;video name&gt;.&lt;language&gt;.vtt", the naming Emby picks up as
+        /// external subtitles. YouTube's automatic captions and auto-translations are never used.
+        /// Regional variants such as "de-DE" are saved under the plain language code. Returns the
+        /// languages that were saved (empty if the video has none of them), or null if yt-dlp failed.
+        /// </summary>
+        public async Task<List<string>?> DownloadSubtitlesAsync(
+            string youtubeKey,
+            IReadOnlyCollection<string> languages,
+            string videoPath,
+            CancellationToken cancellationToken)
+        {
+            var stagingDirectory = CreateStagingDirectory();
+            try
+            {
+                var arguments = new List<string>
+                {
+                    "--skip-download",
+                    "--write-subs",
+                    "--no-write-auto-subs",
+                    "--sub-langs", string.Join(",", languages.Select(l => l + "(-.*)?")),
+                    "--sub-format", "vtt/best",
+                    "-o", Path.Combine(stagingDirectory, "trailer.%(ext)s")
+                };
+
+                if (!await RunAsync(arguments, youtubeKey, cancellationToken).ConfigureAwait(false))
+                {
+                    return null;
+                }
+
+                var videoDirectory = Path.GetDirectoryName(videoPath)!;
+                var videoName = Path.GetFileNameWithoutExtension(videoPath);
+                var saved = new List<string>();
+
+                foreach (var file in Directory.EnumerateFiles(stagingDirectory, "trailer.*.vtt").OrderBy(f => f.Length))
+                {
+                    // trailer.<code>.vtt - the shortest name per language ("de" before "de-DE") wins.
+                    var code = Path.GetFileNameWithoutExtension(file).Substring("trailer.".Length);
+                    var language = languages.FirstOrDefault(l =>
+                        code.Equals(l, StringComparison.OrdinalIgnoreCase)
+                        || code.StartsWith(l + "-", StringComparison.OrdinalIgnoreCase));
+                    if (language is null || saved.Contains(language))
+                    {
+                        continue;
+                    }
+
+                    Publish(file, Path.Combine(videoDirectory, $"{videoName}.{language}.vtt"));
+                    saved.Add(language);
+                }
+
+                return saved;
+            }
+            catch (IOException ex)
+            {
+                _logger.LogWarning(ex, "Could not save subtitles for {Key} next to {Path}", youtubeKey, videoPath);
+                return null;
+            }
+            finally
+            {
+                TryDeleteDirectory(stagingDirectory);
+            }
+        }
+
+        private async Task<bool> RunAsync(List<string> arguments, string youtubeKey, CancellationToken cancellationToken)
+        {
+            var youtubeUrl = $"https://www.youtube.com/watch?v={youtubeKey}";
 
             var startInfo = new ProcessStartInfo
             {
@@ -91,30 +204,28 @@ namespace ComingSoonPlugin.Services
 
             PreferSystemDynamicLinker(startInfo);
 
-            var haveFfmpeg = HasUsableFfmpeg(_ffmpegPath);
+            // yt-dlp starts the runtime itself, so it inherits this environment. Deno otherwise
+            // wants a cache folder under $HOME, which often isn't writable inside a container.
+            if (_jsRuntime?.CacheDirectory is { } denoDir)
+            {
+                startInfo.Environment["DENO_DIR"] = denoDir;
+                startInfo.Environment["DENO_NO_UPDATE_CHECK"] = "1";
+            }
 
             // ArgumentList passes each argument atomically (no shell involved), avoiding any
             // injection risk from youtubeKey containing quotes/special characters.
             startInfo.ArgumentList.Add("--no-progress");
-            startInfo.ArgumentList.Add("-f");
-            // Prefer a progressive (already-muxed, single-file) stream so no ffmpeg merge is
-            // needed - YouTube serves progressive mp4 up to 720p, plenty for a trailer, and it
-            // works even when ffmpeg is missing or too old. Only fall back to separate streams
-            // (which need ffmpeg to merge) when a usable ffmpeg is available.
-            startInfo.ArgumentList.Add(haveFfmpeg
-                ? "best[ext=mp4][vcodec!=none][acodec!=none]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
-                : "best[ext=mp4][vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]/best");
-
-            if (haveFfmpeg)
+            if (_jsRuntime is not null)
             {
-                startInfo.ArgumentList.Add("--ffmpeg-location");
-                startInfo.ArgumentList.Add(_ffmpegPath);
-                startInfo.ArgumentList.Add("--merge-output-format");
-                startInfo.ArgumentList.Add("mp4");
+                startInfo.ArgumentList.Add("--js-runtimes");
+                startInfo.ArgumentList.Add(_jsRuntime.Argument);
             }
 
-            startInfo.ArgumentList.Add("-o");
-            startInfo.ArgumentList.Add(stagedPath);
+            foreach (var argument in arguments)
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
+
             startInfo.ArgumentList.Add(youtubeUrl);
 
             using var process = new Process { StartInfo = startInfo };
@@ -125,6 +236,9 @@ namespace ComingSoonPlugin.Services
 
                 process.Start();
                 process.BeginErrorReadLine();
+                // Never read, but must be drained so a chatty yt-dlp can't block on a full pipe.
+                process.OutputDataReceived += (_, _) => { };
+                process.BeginOutputReadLine();
 
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeoutCts.CancelAfter(ProcessTimeout);
@@ -136,16 +250,10 @@ namespace ComingSoonPlugin.Services
                     _logger.LogWarning(
                         "yt-dlp exited with code {Code} for {Url}: {Error}",
                         process.ExitCode, youtubeUrl, stdErr.ToString());
-                    return null;
+                    return false;
                 }
 
-                if (!File.Exists(stagedPath))
-                {
-                    _logger.LogWarning("yt-dlp reported success but output file is missing: {Path}", stagedPath);
-                    return null;
-                }
-
-                return Publish(stagedPath, outputPath);
+                return true;
             }
             catch (OperationCanceledException)
             {
@@ -156,17 +264,13 @@ namespace ComingSoonPlugin.Services
                     throw;
                 }
 
-                _logger.LogWarning("yt-dlp download timed out after {Timeout} for {Url}", ProcessTimeout, youtubeUrl);
-                return null;
+                _logger.LogWarning("yt-dlp timed out after {Timeout} for {Url}", ProcessTimeout, youtubeUrl);
+                return false;
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to run yt-dlp (path: {Path}) - is it installed and reachable?", _ytDlpPath);
-                return null;
-            }
-            finally
-            {
-                TryDeleteDirectory(stagingDirectory);
+                return false;
             }
         }
 
@@ -194,7 +298,7 @@ namespace ComingSoonPlugin.Services
         /// dynamic linker find the newer system glibc first - safe because glibc is backwards
         /// compatible.
         /// </summary>
-        private static void PreferSystemDynamicLinker(ProcessStartInfo startInfo)
+        internal static void PreferSystemDynamicLinker(ProcessStartInfo startInfo)
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {

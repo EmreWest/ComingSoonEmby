@@ -24,6 +24,13 @@ from one or more Radarr and Sonarr servers.
   to Emby's separate "Trailer" button under **TMDB & Trailers**.
 - **Trailers without a TMDB key.** Movie trailers fall back to the YouTube trailer Radarr knows
   about. TV show trailers still need a TMDB key.
+- **Trailer language and subtitles per server.** Each Sonarr/Radarr server can have its own trailer
+  languages, e.g. `ja` for an anime Sonarr and `de` for the others. If no trailer exists in those
+  languages, English and then the title's original language are used. Subtitles uploaded with the
+  YouTube video (never automatic captions) can be saved alongside, e.g. `de`.
+- **JavaScript runtime for YouTube.** yt-dlp needs one to download from YouTube. Deno is downloaded
+  automatically into the plugin's tools folder (a custom runtime can be set), and the managed yt-dlp
+  copy is now updated weekly.
 - **Automatic builds.** A GitHub Actions workflow builds `ComingSoonPlugin.dll` and publishes it as
   a release for every version tag.
 

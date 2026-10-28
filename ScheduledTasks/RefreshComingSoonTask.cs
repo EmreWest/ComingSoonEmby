@@ -97,10 +97,20 @@ namespace ComingSoonPlugin.ScheduledTasks
                     .ConfigureAwait(false)
                 : config.YtDlpPath;
 
+            var jsRuntime = config.DownloadTrailersLocally
+                ? await DenoProvisioner.ResolveAsync(
+                    config.JsRuntimePath, Plugin.Instance!.DataFolderPath, SharedHttpClient, _logger, cancellationToken)
+                    .ConfigureAwait(false)
+                : null;
+
             // Outside every library folder, so the realtime monitor never sees partial downloads.
             var trailerDownloader = new TrailerDownloader(
-                _logger, ytDlpPath, ffmpegPath, Path.Combine(Plugin.Instance!.DataFolderPath, "trailer-staging"));
+                _logger, ytDlpPath, ffmpegPath, Path.Combine(Plugin.Instance!.DataFolderPath, "trailer-staging"), jsRuntime);
             trailerDownloader.ClearWorkingDirectory();
+
+            // Downloads a trailer shared by several entries (every episode of a series, a movie in
+            // several lists) once per run and copies it to the others.
+            var trailerPlacer = new TrailerPlacer(trailerDownloader, _logger);
 
             // A failed instance is not an empty calendar: if any instance fails, entries of that
             // type are preserved, since they may have come from the server that's unreachable.
@@ -112,8 +122,9 @@ namespace ComingSoonPlugin.ScheduledTasks
                 {
                     try
                     {
-                        rawMovies.AddRange(await radarrService.GetUpcomingRawAsync(
-                            instance.Url, instance.ApiKey, config.DaysAhead, cancellationToken).ConfigureAwait(false));
+                        rawMovies.AddRange(WithTrailerPreferences(await radarrService.GetUpcomingRawAsync(
+                            instance.Url, instance.ApiKey, config.DaysAhead, cancellationToken).ConfigureAwait(false),
+                            instance, config.Language));
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                     {
@@ -133,8 +144,9 @@ namespace ComingSoonPlugin.ScheduledTasks
                 {
                     try
                     {
-                        episodes.AddRange(await sonarrService.GetUpcomingAsync(
-                            instance.Url, instance.ApiKey, config.DaysAhead, cancellationToken).ConfigureAwait(false));
+                        episodes.AddRange(WithTrailerPreferences(await sonarrService.GetUpcomingAsync(
+                            instance.Url, instance.ApiKey, config.DaysAhead, cancellationToken).ConfigureAwait(false),
+                            instance, config.Language));
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                     {
@@ -154,10 +166,6 @@ namespace ComingSoonPlugin.ScheduledTasks
             // One lookup per unique movie+region per run. The same movie can appear in several
             // lists, and lists can deliberately use different countries.
             var regionalReleaseDateCache = new Dictionary<string, RegionalReleaseDates?>(StringComparer.OrdinalIgnoreCase);
-
-            // Maps a YouTube trailer key to the first local file downloaded for it this run, so
-            // the same trailer is fetched once and copied to every other folder that needs it.
-            var trailerPathCache = new Dictionary<string, string>();
 
             // A language switch or a badge-design change alters the burned-in poster/backdrop, so
             // existing items need Emby to re-read their re-rendered local images - a plain file
@@ -249,8 +257,8 @@ namespace ComingSoonPlugin.ScheduledTasks
                     {
                         var badgeKind = BadgeKindFor(calendarItem.Type, list.MovieDateType);
                         var cached = await EnrichAsync(
-                            calendarItem, aggregator, imageOverlayService, trailerDownloader, config,
-                            libraryDataPath, metadataCache, trailerPathCache, badgeKind, cancellationToken).ConfigureAwait(false);
+                            calendarItem, aggregator, imageOverlayService, trailerPlacer, config,
+                            libraryDataPath, metadataCache, badgeKind, cancellationToken).ConfigureAwait(false);
 
                         if (cached != null)
                         {
@@ -292,6 +300,26 @@ namespace ComingSoonPlugin.ScheduledTasks
             }
         }
 
+        // Merged duplicates keep the first instance's copy, and with it that instance's languages.
+        private static List<CalendarItem> WithTrailerPreferences(
+            List<CalendarItem> items, ArrInstanceConfig instance, ComingSoonLanguage language)
+        {
+            var trailerLanguages = ArrInstanceConfig.ParseLanguages(instance.TrailerLanguages);
+            if (trailerLanguages.Count == 0)
+            {
+                trailerLanguages.Add(language == ComingSoonLanguage.German ? "de" : "en");
+            }
+
+            var subtitleLanguages = ArrInstanceConfig.ParseLanguages(instance.SubtitleLanguages);
+            foreach (var item in items)
+            {
+                item.TrailerLanguages = trailerLanguages;
+                item.SubtitleLanguages = subtitleLanguages;
+            }
+
+            return items;
+        }
+
         private static IEnumerable<ArrInstanceConfig> EnabledInstances(IEnumerable<ArrInstanceConfig> instances) =>
             instances.Where(i => i.Enabled && !string.IsNullOrWhiteSpace(i.Url));
 
@@ -318,15 +346,14 @@ namespace ComingSoonPlugin.ScheduledTasks
             };
         }
 
-        private static async Task<CachedMediaItem?> EnrichAsync(
+        private async Task<CachedMediaItem?> EnrichAsync(
             CalendarItem calendarItem,
             MetadataAggregator aggregator,
             ImageOverlayService imageOverlayService,
-            TrailerDownloader trailerDownloader,
+            TrailerPlacer trailerPlacer,
             PluginConfiguration config,
             string libraryDataPath,
             Dictionary<string, MetadataResult> metadataCache,
-            Dictionary<string, string> trailerPathCache,
             ReleaseBadgeKind badgeKind,
             CancellationToken cancellationToken)
         {
@@ -340,12 +367,31 @@ namespace ComingSoonPlugin.ScheduledTasks
                 return null;
             }
 
-            if (!metadataCache.TryGetValue(calendarItem.MetadataCacheKey, out var metadata))
+            // The trailer pick depends on the source instance's languages, the rest doesn't.
+            var metadataCacheKey = calendarItem.MetadataCacheKey + "|" + string.Join(",", calendarItem.TrailerLanguages);
+            if (!metadataCache.TryGetValue(metadataCacheKey, out var metadata))
             {
                 metadata = calendarItem.Type == CalendarItemType.Movie
-                    ? await aggregator.GetForMovieAsync(calendarItem.TmdbId!.Value, cancellationToken).ConfigureAwait(false)
-                    : await aggregator.GetForSeriesAsync(calendarItem.TvdbId!.Value, cancellationToken).ConfigureAwait(false);
-                metadataCache[calendarItem.MetadataCacheKey] = metadata;
+                    ? await aggregator.GetForMovieAsync(calendarItem.TmdbId!.Value, calendarItem.TrailerLanguages, cancellationToken).ConfigureAwait(false)
+                    : await aggregator.GetForSeriesAsync(calendarItem.TvdbId!.Value, calendarItem.TrailerLanguages, cancellationToken).ConfigureAwait(false);
+                metadataCache[metadataCacheKey] = metadata;
+
+                if (config.DownloadTrailersLocally)
+                {
+                    if (metadata.TrailerYoutubeKey is not null)
+                    {
+                        _logger.LogDebug(
+                            "Coming Soon: trailer for '{Title}' is {Key} ({Language})",
+                            calendarItem.Title, metadata.TrailerYoutubeKey, metadata.TrailerLanguage);
+                    }
+                    else if (calendarItem.TrailerYoutubeKey is null)
+                    {
+                        _logger.LogInformation(
+                            "Coming Soon: no trailer found for '{Title}' - TMDB has no YouTube video in {Languages}, English or the original language{Hint}",
+                            calendarItem.Title, string.Join(", ", calendarItem.TrailerLanguages),
+                            string.IsNullOrWhiteSpace(config.TmdbApiKey) ? " (no TMDB API key set)" : string.Empty);
+                    }
+                }
             }
 
             var folderName = ComingSoonEntryPaths.BuildFolderName(
@@ -370,9 +416,9 @@ namespace ComingSoonPlugin.ScheduledTasks
             }
 
             var trailerIsMainVideo = config.DownloadTrailersLocally
-                && await PlaceTrailerAsync(
-                    metadata.TrailerYoutubeKey ?? calendarItem.TrailerYoutubeKey, entryDir, config.TrailerAsMainVideo,
-                    trailerDownloader, trailerPathCache, cancellationToken).ConfigureAwait(false);
+                && await trailerPlacer.PlaceAsync(
+                    metadata.TrailerYoutubeKey ?? calendarItem.TrailerYoutubeKey, calendarItem.SubtitleLanguages, entryDir,
+                    config.TrailerAsMainVideo, cancellationToken).ConfigureAwait(false);
 
             return new CachedMediaItem
             {
@@ -388,87 +434,6 @@ namespace ComingSoonPlugin.ScheduledTasks
                 TrailerIsMainVideo = trailerIsMainVideo,
                 Cast = metadata.Cast
             };
-        }
-
-        /// <summary>
-        /// Puts the entry's trailer where the current setting wants it: as the main video, or as
-        /// trailers/trailer.mp4 next to the placeholder. A trailer already in place is kept, one
-        /// left in the other location by a setting change is moved, and only otherwise is it
-        /// copied from another entry or downloaded. Returns true if the main video is now the
-        /// trailer, in which case the library sync must not overwrite it with the placeholder.
-        /// </summary>
-        private static async Task<bool> PlaceTrailerAsync(
-            string? trailerKey,
-            string entryDir,
-            bool asMainVideo,
-            TrailerDownloader trailerDownloader,
-            Dictionary<string, string> trailerPathCache,
-            CancellationToken cancellationToken)
-        {
-            var mainVideoPath = Path.Combine(entryDir, ComingSoonFileLibrarySync.MainVideoFileName);
-            var extraDir = Path.Combine(entryDir, "trailers");
-            var extraPath = Path.Combine(extraDir, TrailerDownloader.TrailerFileName);
-            var targetPath = asMainVideo ? mainVideoPath : extraPath;
-            var mainIsTrailer = File.Exists(mainVideoPath) && !ComingSoonFileLibrarySync.IsPlaceholderVideo(mainVideoPath);
-
-            if (asMainVideo && !mainIsTrailer && File.Exists(extraPath))
-            {
-                File.Move(extraPath, mainVideoPath, overwrite: true);
-                TryDeleteEmptyDirectory(extraDir);
-                mainIsTrailer = true;
-            }
-            else if (!asMainVideo && mainIsTrailer && !File.Exists(extraPath))
-            {
-                // The library sync writes the placeholder back into the main video's place.
-                Directory.CreateDirectory(extraDir);
-                File.Move(mainVideoPath, extraPath);
-                mainIsTrailer = false;
-            }
-
-            if (asMainVideo ? mainIsTrailer : File.Exists(extraPath))
-            {
-                if (!string.IsNullOrWhiteSpace(trailerKey))
-                {
-                    trailerPathCache.TryAdd(trailerKey!, targetPath);
-                }
-
-                return asMainVideo;
-            }
-
-            if (string.IsNullOrWhiteSpace(trailerKey))
-            {
-                return false;
-            }
-
-            // Reuse a trailer already downloaded this run for the same YouTube video (every
-            // episode of a series shares one trailer, and a movie can appear in several lists)
-            // instead of fetching it from YouTube again per folder.
-            var placed = trailerPathCache.TryGetValue(trailerKey!, out var existingTrailer) && File.Exists(existingTrailer)
-                ? trailerDownloader.ReuseExisting(existingTrailer, targetPath)
-                : await trailerDownloader.DownloadAsync(trailerKey!, targetPath, cancellationToken).ConfigureAwait(false);
-
-            if (placed is null)
-            {
-                return false;
-            }
-
-            trailerPathCache.TryAdd(trailerKey!, placed);
-            return asMainVideo;
-        }
-
-        private static void TryDeleteEmptyDirectory(string path)
-        {
-            try
-            {
-                if (Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any())
-                {
-                    Directory.Delete(path);
-                }
-            }
-            catch (Exception)
-            {
-                // Harmless leftover; the next refresh tries again.
-            }
         }
     }
 }

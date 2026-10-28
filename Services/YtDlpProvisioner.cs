@@ -15,11 +15,14 @@ namespace ComingSoonPlugin.Services
     /// neither works does this fall back to downloading the official standalone binary into the
     /// plugin's own persistent data folder - which, unlike anything installed into the container
     /// image itself, survives container recreation on any image (LinuxServer, official
-    /// emby/embyserver, bare metal, ...).
+    /// emby/embyserver, bare metal, ...). The official binaries bundle the EJS scripts yt-dlp
+    /// needs for YouTube (together with a JS runtime, see DenoProvisioner). They have to keep up
+    /// with YouTube's changes, so the managed copy is replaced once it's older than MaxManagedAge.
     /// </summary>
     public static class YtDlpProvisioner
     {
         private const string ReleaseBaseUrl = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/";
+        private static readonly TimeSpan MaxManagedAge = TimeSpan.FromDays(7);
 
         public static async Task<string> ResolveAsync(
             string configuredPath, string dataFolderPath, HttpClient httpClient, ILogger logger, CancellationToken cancellationToken)
@@ -30,19 +33,21 @@ namespace ComingSoonPlugin.Services
             }
 
             var managedPath = Path.Combine(dataFolderPath, "bin", GetManagedFileName());
-            if (File.Exists(managedPath))
+            var exists = File.Exists(managedPath);
+            if (exists && DateTime.UtcNow - File.GetLastWriteTimeUtc(managedPath) < MaxManagedAge)
             {
                 return managedPath;
             }
 
-            return await DownloadAsync(managedPath, httpClient, logger, cancellationToken).ConfigureAwait(false)
-                ?? configuredPath;
+            // A failed update keeps the existing copy rather than leaving trailers without yt-dlp.
+            var downloaded = await DownloadAsync(managedPath, httpClient, logger, cancellationToken).ConfigureAwait(false);
+            return downloaded ?? (exists ? managedPath : configuredPath);
         }
 
         private static bool IsUsableAbsolutePath(string path) =>
             !string.IsNullOrWhiteSpace(path) && Path.IsPathRooted(path) && File.Exists(path);
 
-        private static bool IsOnPath(string command)
+        internal static bool IsOnPath(string command)
         {
             if (string.IsNullOrWhiteSpace(command) || Path.IsPathRooted(command))
             {
@@ -88,35 +93,65 @@ namespace ComingSoonPlugin.Services
         {
             var assetName = GetReleaseAssetName();
             var url = ReleaseBaseUrl + assetName;
+            // Downloaded next to the target and renamed once complete, so an interrupted update
+            // never replaces a working copy with a truncated one.
+            var tempPath = destinationPath + ".download";
 
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
 
-                using var response = await httpClient.GetAsync(url, cancellationToken).ConfigureAwait(false);
+                using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                    .ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
 
                 await using (var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
-                await using (var fileStream = File.Create(destinationPath))
+                await using (var fileStream = File.Create(tempPath))
                 {
                     await stream.CopyToAsync(fileStream, cancellationToken).ConfigureAwait(false);
                 }
 
-                if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                {
-                    File.SetUnixFileMode(destinationPath,
-                        UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-                        UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-                        UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-                }
+                MakeExecutable(tempPath);
+                File.Move(tempPath, destinationPath, overwrite: true);
 
                 logger.LogInformation("Coming Soon: downloaded yt-dlp ({Asset}) to {Path}", assetName, destinationPath);
                 return destinationPath;
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Coming Soon: failed to download yt-dlp from {Url} - local trailer download will be skipped", url);
+                logger.LogWarning(ex, "Coming Soon: failed to download yt-dlp from {Url}", url);
+                TryDelete(tempPath);
                 return null;
+            }
+        }
+
+        internal static void MakeExecutable(string path)
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                File.SetUnixFileMode(path,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                    UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                    UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+            }
+        }
+
+        internal static void TryDelete(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch (IOException)
+            {
+                // Overwritten by the next attempt.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Overwritten by the next attempt.
             }
         }
     }

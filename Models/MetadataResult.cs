@@ -14,5 +14,6 @@ namespace ComingSoonPlugin.Models
         public string? BackdropUrl { get; set; }
         public List<CastMember> Cast { get; set; } = new();
         public string? TrailerYoutubeKey { get; set; }
+        public string? TrailerLanguage { get; set; }
     }
 }
