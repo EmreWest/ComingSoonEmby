@@ -28,6 +28,9 @@ namespace ComingSoonPlugin.Models
         public int? EpisodeNumber { get; set; }
         public string? EpisodeTitle { get; set; }
 
+        /// <summary>The entry's main video is the downloaded trailer, not the bundled placeholder.</summary>
+        public bool TrailerIsMainVideo { get; set; }
+
         public List<CastMember> Cast { get; set; } = new();
     }
 }

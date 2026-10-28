@@ -102,6 +102,20 @@ namespace ComingSoonPlugin.Services
             return results;
         }
 
+        /// <summary>
+        /// Collapses episodes returned by several Sonarr instances into one item per series and
+        /// season/episode number, keeping the first instance's copy. Episodes without a TVDB id
+        /// can't be matched and are kept as-is.
+        /// </summary>
+        public static List<CalendarItem> MergeInstances(IEnumerable<CalendarItem> episodes)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            return episodes
+                .Where(e => !e.TvdbId.HasValue || seen.Add(e.StableKey))
+                .OrderBy(e => e.Date)
+                .ToList();
+        }
+
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
             PropertyNameCaseInsensitive = true

@@ -16,18 +16,21 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             readmeButton: "📖 Readme",
             readmeHeading: "📖 How it works",
             readmeHowHeading: "What the plugin does",
-            readmeHowText: "The scheduled task reads upcoming movies from Radarr and episodes from Sonarr. For movies, TMDB supplies release dates for the country selected in each list. It creates one normal Emby library for every configured list and refreshes it automatically.",
+            readmeHowText: "The scheduled task reads upcoming movies from one or more Radarr servers and episodes from one or more Sonarr servers. For movies, TMDB supplies release dates for the country selected in each list. It creates one normal Emby library for every configured list with realtime monitoring turned on, so Emby picks up changes as soon as a refresh writes them.",
             readmeStorageHeading: "Where files are stored",
-            readmeStorageText: "Each entry is stored inside the plugin data folder with its poster, backdrop, NFO file, short placeholder video and, when enabled, a local trailer. Removing an expired entry removes its folder on the next successful refresh.",
+            readmeStorageText: "Each entry is stored inside the plugin data folder with its poster, backdrop and NFO file. Its video is the downloaded trailer when one is available, otherwise a short placeholder. Removing an expired entry removes its folder on the next successful refresh.",
             readmeVersionsHeading: "Supported Emby versions",
             readmeVersionsText: "Emby Server 4.9.5 Stable and Emby Server 4.10 Beta. Built against 4.9.5 and tested on 4.10 Beta.",
             daysAheadLabel: "Days ahead to show",
             daysAheadDescription: "How far into the future to pull upcoming releases from the Sonarr/Radarr calendars (up to 365 days).",
             sonarrSummary: "Sonarr",
             radarrSummary: "Radarr",
+            sonarrDescription: "Add one or more Sonarr servers. Upcoming episodes from all enabled servers are combined; an episode tracked by several servers appears only once.",
+            radarrDescription: "Add one or more Radarr servers (e.g. a 1080p and a 4K instance). Upcoming movies from all enabled servers are combined; a movie tracked by several servers appears only once.",
+            addSonarrButton: "+ Add Sonarr server",
+            addRadarrButton: "+ Add Radarr server",
+            instanceNameLabel: "Name",
             enabledLabel: "Enabled",
-            sonarrEnabledDescription: "Turn on to pull upcoming TV episodes from Sonarr.",
-            radarrEnabledDescription: "Turn on to pull upcoming movies from Radarr.",
             serverUrlLabel: "Server URL",
             sonarrUrlDescription: "Base URL of your Sonarr server, e.g. http://localhost:8989.",
             radarrUrlDescription: "Base URL of your Radarr server, e.g. http://localhost:7878.",
@@ -51,7 +54,9 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             tmdbApiKeyLabel: "API Key (optional - needed for regional dates and local trailers)",
             tmdbApiKeyDescription: "Enables country-specific movie dates, verified US fallback dates and local trailer downloads. Without it, movie dates fall back to Radarr. Free key at themoviedb.org/settings/api.",
             downloadTrailersLabel: "Download trailers locally (recommended for Apple TV / native clients)",
-            downloadTrailersDescription: "Downloads the trailer as a real file so it plays inside Emby instead of opening YouTube. Needs a TMDB API key.",
+            downloadTrailersDescription: "Downloads the trailer from YouTube as a real file so it plays inside Emby instead of opening YouTube. Movie trailers come from TMDB or, without a TMDB key, from Radarr; TV show trailers need a TMDB key.",
+            trailerAsMainVideoLabel: "Play the trailer instead of the placeholder video",
+            trailerAsMainVideoDescription: "Pressing Play on an entry starts its trailer. Entries without a trailer keep the short placeholder. When off, the trailer is available through Emby's \"Trailer\" button instead.",
             ytDlpPathLabel: "yt-dlp path",
             ytDlpDescription: "Default \"yt-dlp\" tries PATH first, then auto-downloads a standalone copy into the plugin's own data folder if not found - works regardless of which Docker image is used.",
             ffmpegPathLabel: "ffmpeg path (optional)",
@@ -89,18 +94,21 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             readmeButton: "📖 Readme",
             readmeHeading: "📖 So funktioniert es",
             readmeHowHeading: "Was das Plugin macht",
-            readmeHowText: "Die geplante Aufgabe liest kommende Filme aus Radarr und Episoden aus Sonarr. Für Filme liefert TMDB die Veröffentlichungstermine des in der jeweiligen Liste gewählten Landes. Für jede eingerichtete Liste wird eine normale Emby-Bibliothek erstellt und automatisch aktualisiert.",
+            readmeHowText: "Die geplante Aufgabe liest kommende Filme aus einem oder mehreren Radarr-Servern und Episoden aus einem oder mehreren Sonarr-Servern. Für Filme liefert TMDB die Veröffentlichungstermine des in der jeweiligen Liste gewählten Landes. Für jede eingerichtete Liste wird eine normale Emby-Bibliothek mit aktivierter Echtzeitüberwachung erstellt, damit Emby Änderungen sofort nach einer Aktualisierung übernimmt.",
             readmeStorageHeading: "Wo die Dateien gespeichert werden",
-            readmeStorageText: "Jeder Eintrag liegt im Datenordner des Plugins – mit Poster, Hintergrundbild, NFO-Datei, kurzem Platzhaltervideo und, falls aktiviert, einem lokalen Trailer. Abgelaufene Einträge werden nach der nächsten erfolgreichen Aktualisierung entfernt.",
+            readmeStorageText: "Jeder Eintrag liegt im Datenordner des Plugins – mit Poster, Hintergrundbild und NFO-Datei. Als Video dient der heruntergeladene Trailer, sofern vorhanden, sonst ein kurzes Platzhaltervideo. Abgelaufene Einträge werden nach der nächsten erfolgreichen Aktualisierung entfernt.",
             readmeVersionsHeading: "Unterstützte Emby-Versionen",
             readmeVersionsText: "Emby Server 4.9.5 Stable und Emby Server 4.10 Beta. Gebaut gegen 4.9.5 und getestet auf 4.10 Beta.",
             daysAheadLabel: "Tage im Voraus anzeigen",
             daysAheadDescription: "Wie weit in die Zukunft kommende Veröffentlichungen aus den Sonarr/Radarr-Kalendern geholt werden (bis zu 365 Tage).",
             sonarrSummary: "Sonarr",
             radarrSummary: "Radarr",
+            sonarrDescription: "Einen oder mehrere Sonarr-Server hinzufügen. Kommende Episoden aller aktivierten Server werden zusammengeführt; eine Episode, die mehrere Server verfolgen, erscheint nur einmal.",
+            radarrDescription: "Einen oder mehrere Radarr-Server hinzufügen (z.B. eine 1080p- und eine 4K-Instanz). Kommende Filme aller aktivierten Server werden zusammengeführt; ein Film, den mehrere Server verfolgen, erscheint nur einmal.",
+            addSonarrButton: "+ Sonarr-Server hinzufügen",
+            addRadarrButton: "+ Radarr-Server hinzufügen",
+            instanceNameLabel: "Name",
             enabledLabel: "Aktiviert",
-            sonarrEnabledDescription: "Aktivieren, um kommende Serien-Episoden aus Sonarr zu holen.",
-            radarrEnabledDescription: "Aktivieren, um kommende Filme aus Radarr zu holen.",
             serverUrlLabel: "Server-URL",
             sonarrUrlDescription: "Basis-URL deines Sonarr-Servers, z.B. http://localhost:8989.",
             radarrUrlDescription: "Basis-URL deines Radarr-Servers, z.B. http://localhost:7878.",
@@ -124,7 +132,9 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             tmdbApiKeyLabel: "API-Schlüssel (optional - für regionale Termine und lokale Trailer)",
             tmdbApiKeyDescription: "Aktiviert länderspezifische Filmtermine, bestätigte US-Ersatztermine und lokale Trailer-Downloads. Ohne Schlüssel werden Radarr-Termine verwendet. Kostenloser Schlüssel unter themoviedb.org/settings/api.",
             downloadTrailersLabel: "Trailer lokal herunterladen (empfohlen für Apple TV / native Clients)",
-            downloadTrailersDescription: "Lädt den Trailer als echte Datei herunter, damit er in Emby abgespielt wird statt YouTube zu öffnen. Benötigt einen TMDB-API-Schlüssel.",
+            downloadTrailersDescription: "Lädt den Trailer von YouTube als echte Datei herunter, damit er in Emby abgespielt wird statt YouTube zu öffnen. Film-Trailer kommen von TMDB oder, ohne TMDB-Schlüssel, von Radarr; Serien-Trailer benötigen einen TMDB-Schlüssel.",
+            trailerAsMainVideoLabel: "Trailer statt Platzhaltervideo abspielen",
+            trailerAsMainVideoDescription: "Beim Abspielen eines Eintrags startet dessen Trailer. Einträge ohne Trailer behalten das kurze Platzhaltervideo. Ist die Option aus, ist der Trailer stattdessen über Embys \"Trailer\"-Schaltfläche erreichbar.",
             ytDlpPathLabel: "yt-dlp-Pfad",
             ytDlpDescription: "Standard \"yt-dlp\" versucht zuerst PATH, lädt bei Bedarf automatisch eine eigene Kopie in den Plugin-Datenordner herunter - funktioniert unabhängig vom verwendeten Docker-Image.",
             ffmpegPathLabel: "ffmpeg-Pfad (optional)",
@@ -160,6 +170,7 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
     return function (view) {
         var currentLanguage = "English";
         var currentLists = [];
+        var currentInstances = { Sonarr: [], Radarr: [] };
 
         function t() {
             return text[currentLanguage] || text.English;
@@ -178,22 +189,10 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             view.querySelector('#DaysAhead').setAttribute('label', s.daysAheadLabel);
             view.querySelector('#CsDaysAheadDescription').textContent = s.daysAheadDescription;
 
-            view.querySelector('#CsSonarrSummary').textContent = s.sonarrSummary;
-            view.querySelector('#CsRadarrSummary').textContent = s.radarrSummary;
-            view.querySelector('#CsSonarrEnabledLabel').textContent = s.enabledLabel;
-            view.querySelector('#CsRadarrEnabledLabel').textContent = s.enabledLabel;
-            view.querySelector('#CsSonarrEnabledDescription').textContent = s.sonarrEnabledDescription;
-            view.querySelector('#CsRadarrEnabledDescription').textContent = s.radarrEnabledDescription;
-            view.querySelector('#SonarrUrl').setAttribute('label', s.serverUrlLabel);
-            view.querySelector('#CsSonarrUrlDescription').textContent = s.sonarrUrlDescription;
-            view.querySelector('#RadarrUrl').setAttribute('label', s.serverUrlLabel);
-            view.querySelector('#CsRadarrUrlDescription').textContent = s.radarrUrlDescription;
-            view.querySelector('#SonarrApiKey').setAttribute('label', s.apiKeyLabel);
-            view.querySelector('#CsSonarrApiKeyDescription').textContent = s.sonarrApiKeyDescription;
-            view.querySelector('#RadarrApiKey').setAttribute('label', s.apiKeyLabel);
-            view.querySelector('#CsRadarrApiKeyDescription').textContent = s.radarrApiKeyDescription;
-            view.querySelector('#TestSonarr').textContent = s.testConnection;
-            view.querySelector('#TestRadarr').textContent = s.testConnection;
+            view.querySelector('#CsSonarrDescription').textContent = s.sonarrDescription;
+            view.querySelector('#CsRadarrDescription').textContent = s.radarrDescription;
+            view.querySelector('#BtnAddSonarr').textContent = s.addSonarrButton;
+            view.querySelector('#BtnAddRadarr').textContent = s.addRadarrButton;
 
             view.querySelector('#CsListsSummary').textContent = s.listsSummary;
             view.querySelector('#CsListsDescription').textContent = s.listsDescription;
@@ -204,6 +203,8 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             view.querySelector('#CsTmdbApiKeyDescription').textContent = s.tmdbApiKeyDescription;
             view.querySelector('#CsDownloadTrailersLabel').textContent = s.downloadTrailersLabel;
             view.querySelector('#CsDownloadTrailersDescription').textContent = s.downloadTrailersDescription;
+            view.querySelector('#CsTrailerAsMainVideoLabel').textContent = s.trailerAsMainVideoLabel;
+            view.querySelector('#CsTrailerAsMainVideoDescription').textContent = s.trailerAsMainVideoDescription;
             view.querySelector('#YtDlpPath').setAttribute('label', s.ytDlpPathLabel);
             view.querySelector('#CsYtDlpDescription').textContent = s.ytDlpDescription;
             view.querySelector('#FfmpegPath').setAttribute('label', s.ffmpegPathLabel);
@@ -362,6 +363,126 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             window.open(url, '_blank');
         }
 
+        // --- Dynamic Sonarr/Radarr server editor ---
+
+        var defaultPorts = { Sonarr: 8989, Radarr: 7878 };
+
+        function defaultInstance(kind) {
+            var count = currentInstances[kind].length;
+            return {
+                Name: count ? kind + ' ' + (count + 1) : kind,
+                Enabled: true,
+                Url: 'http://localhost:' + defaultPorts[kind],
+                ApiKey: ''
+            };
+        }
+
+        // Before 1.3 each kind had exactly one server stored in flat fields. Show it as the first
+        // instance so it's carried over into the instance list on the next Save.
+        function instancesFromConfig(config, kind) {
+            var saved = config[kind + 'Instances'];
+            if (saved && saved.length) {
+                return saved.map(function (i) {
+                    return { Name: i.Name || '', Enabled: i.Enabled !== false, Url: i.Url || '', ApiKey: i.ApiKey || '' };
+                });
+            }
+
+            if (config[kind + 'Enabled'] || config[kind + 'ApiKey']) {
+                return [{ Name: kind, Enabled: !!config[kind + 'Enabled'], Url: config[kind + 'Url'] || '', ApiKey: config[kind + 'ApiKey'] || '' }];
+            }
+
+            return [];
+        }
+
+        function buildTextInput(type, label, value, onInput, description) {
+            var wrap = document.createElement('div');
+            wrap.className = 'inputContainer';
+            var input = document.createElement('input', { is: 'emby-input' });
+            input.type = type;
+            input.setAttribute('label', label);
+            input.value = value;
+            input.addEventListener('input', function () { onInput(input.value); });
+            wrap.appendChild(input);
+            if (description) {
+                var desc = document.createElement('div');
+                desc.className = 'fieldDescription';
+                desc.textContent = description;
+                wrap.appendChild(desc);
+            }
+            return wrap;
+        }
+
+        function renderInstances(kind) {
+            var s = t();
+            var instances = currentInstances[kind];
+            var container = view.querySelector('#' + kind + 'InstancesContainer');
+            container.innerHTML = '';
+
+            var summary = s[kind.toLowerCase() + 'Summary'];
+            view.querySelector('#Cs' + kind + 'Summary').textContent =
+                instances.length ? summary + ' (' + instances.length + ')' : summary;
+
+            instances.forEach(function (instance, index) {
+                var row = document.createElement('div');
+                row.className = 'csListRow';
+
+                row.appendChild(buildTextInput('text', s.instanceNameLabel, instance.Name,
+                    function (v) { instance.Name = v; }));
+
+                var enabledLabel = document.createElement('label');
+                enabledLabel.className = 'emby-checkbox-label';
+                var enabledCheckbox = document.createElement('input', { is: 'emby-checkbox' });
+                enabledCheckbox.type = 'checkbox';
+                enabledCheckbox.checked = instance.Enabled;
+                enabledCheckbox.addEventListener('change', function () { instance.Enabled = enabledCheckbox.checked; });
+                var enabledSpan = document.createElement('span');
+                enabledSpan.textContent = s.enabledLabel;
+                enabledLabel.appendChild(enabledCheckbox);
+                enabledLabel.appendChild(enabledSpan);
+                row.appendChild(enabledLabel);
+
+                row.appendChild(buildTextInput('text', s.serverUrlLabel, instance.Url,
+                    function (v) { instance.Url = v; }, s[kind.toLowerCase() + 'UrlDescription']));
+                row.appendChild(buildTextInput('password', s.apiKeyLabel, instance.ApiKey,
+                    function (v) { instance.ApiKey = v; }, s[kind.toLowerCase() + 'ApiKeyDescription']));
+
+                var testResult = document.createElement('div');
+                testResult.className = 'fieldDescription';
+                testResult.style.display = 'none';
+                testResult.style.marginTop = '0.5em';
+
+                var buttons = document.createElement('div');
+                buttons.className = 'csHeaderButtons';
+                buttons.style.marginTop = '0.5em';
+
+                var testBtn = document.createElement('button', { is: 'emby-button' });
+                testBtn.type = 'button';
+                testBtn.className = 'raised';
+                testBtn.textContent = s.testConnection;
+                testBtn.addEventListener('click', function () { testConnection(kind, instance, testResult); });
+                buttons.appendChild(testBtn);
+
+                var removeBtn = document.createElement('button', { is: 'emby-button' });
+                removeBtn.type = 'button';
+                removeBtn.className = 'raised';
+                removeBtn.textContent = s.removeButton;
+                removeBtn.addEventListener('click', function () {
+                    instances.splice(index, 1);
+                    renderInstances(kind);
+                });
+                buttons.appendChild(removeBtn);
+
+                row.appendChild(buttons);
+                row.appendChild(testResult);
+                container.appendChild(row);
+            });
+        }
+
+        function addInstance(kind) {
+            currentInstances[kind].push(defaultInstance(kind));
+            renderInstances(kind);
+        }
+
         // --- Dynamic list editor ---
         // Mirrors the createElement(tag, {is: ...}) pattern used elsewhere for Emby's custom
         // elements (emby-checkbox/emby-select) rather than innerHTML strings, so dynamically
@@ -497,18 +618,16 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
                 view.querySelector('#BadgePosition').value = config.BadgePosition || 'TopLeft';
                 applyStaticText();
 
-                view.querySelector('#SonarrEnabled').checked = config.SonarrEnabled;
-                view.querySelector('#SonarrUrl').value = config.SonarrUrl || '';
-                view.querySelector('#SonarrApiKey').value = config.SonarrApiKey || '';
-
-                view.querySelector('#RadarrEnabled').checked = config.RadarrEnabled;
-                view.querySelector('#RadarrUrl').value = config.RadarrUrl || '';
-                view.querySelector('#RadarrApiKey').value = config.RadarrApiKey || '';
+                currentInstances.Sonarr = instancesFromConfig(config, 'Sonarr');
+                currentInstances.Radarr = instancesFromConfig(config, 'Radarr');
+                renderInstances('Sonarr');
+                renderInstances('Radarr');
 
                 view.querySelector('#TmdbApiKey').value = config.TmdbApiKey || '';
 
                 view.querySelector('#DaysAhead').value = config.DaysAhead;
                 view.querySelector('#DownloadTrailersLocally').checked = config.DownloadTrailersLocally;
+                view.querySelector('#TrailerAsMainVideo').checked = config.TrailerAsMainVideo !== false;
                 view.querySelector('#YtDlpPath').value = config.YtDlpPath || 'yt-dlp';
                 view.querySelector('#FfmpegPath').value = config.FfmpegPath || '';
 
@@ -534,13 +653,14 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
         }
 
         function buildConfigFromForm(config) {
-            config.SonarrEnabled = view.querySelector('#SonarrEnabled').checked;
-            config.SonarrUrl = view.querySelector('#SonarrUrl').value;
-            config.SonarrApiKey = view.querySelector('#SonarrApiKey').value;
-
-            config.RadarrEnabled = view.querySelector('#RadarrEnabled').checked;
-            config.RadarrUrl = view.querySelector('#RadarrUrl').value;
-            config.RadarrApiKey = view.querySelector('#RadarrApiKey').value;
+            ['Sonarr', 'Radarr'].forEach(function (kind) {
+                config[kind + 'Instances'] = currentInstances[kind].map(function (i) {
+                    return { Name: (i.Name || '').trim(), Enabled: i.Enabled, Url: (i.Url || '').trim(), ApiKey: (i.ApiKey || '').trim() };
+                });
+                // The instance list is authoritative from now on; switching the old single-server
+                // fields off keeps a deliberately emptied list from falling back to them.
+                config[kind + 'Enabled'] = false;
+            });
 
             config.TmdbApiKey = view.querySelector('#TmdbApiKey').value;
             config.Language = view.querySelector('#Language').value;
@@ -548,6 +668,7 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
 
             config.DaysAhead = parseInt(view.querySelector('#DaysAhead').value, 10);
             config.DownloadTrailersLocally = view.querySelector('#DownloadTrailersLocally').checked;
+            config.TrailerAsMainVideo = view.querySelector('#TrailerAsMainVideo').checked;
             config.YtDlpPath = view.querySelector('#YtDlpPath').value;
             config.FfmpegPath = view.querySelector('#FfmpegPath').value;
 
@@ -595,19 +716,15 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             });
         }
 
-        function testConnection(kind) {
+        function testConnection(kind, instance, resultEl) {
             var s = t();
-            var urlEl = view.querySelector('#' + kind + 'Url');
-            var keyEl = view.querySelector('#' + kind + 'ApiKey');
-            var resultEl = view.querySelector('#' + kind + 'TestResult');
-
             resultEl.style.display = 'block';
             resultEl.textContent = s.testingText;
 
             ApiClient.ajax({
                 type: 'POST',
                 url: ApiClient.getUrl('ComingSoon/Test' + kind),
-                data: JSON.stringify({ Url: urlEl.value, ApiKey: keyEl.value }),
+                data: JSON.stringify({ Url: (instance.Url || '').trim(), ApiKey: (instance.ApiKey || '').trim() }),
                 contentType: 'application/json',
                 dataType: 'json'
             }).then(function (result) {
@@ -624,8 +741,8 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
         // dispatch viewshow to plugin config views, and when it doesn't fire the Save
         // button would otherwise never get a click handler.
         view.querySelector('#ComingSoonConfigForm').addEventListener('submit', saveConfig);
-        view.querySelector('#TestSonarr').addEventListener('click', function () { testConnection('Sonarr'); });
-        view.querySelector('#TestRadarr').addEventListener('click', function () { testConnection('Radarr'); });
+        view.querySelector('#BtnAddSonarr').addEventListener('click', function () { addInstance('Sonarr'); });
+        view.querySelector('#BtnAddRadarr').addEventListener('click', function () { addInstance('Radarr'); });
         view.querySelector('#BtnAddList').addEventListener('click', addList);
         view.querySelector('#BtnInfo').addEventListener('click', openInfoModal);
         view.querySelector('#BtnReadme').addEventListener('click', openReadmeModal);
@@ -647,6 +764,8 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
         view.querySelector('#Language').addEventListener('change', function () {
             currentLanguage = view.querySelector('#Language').value;
             applyStaticText();
+            renderInstances('Sonarr');
+            renderInstances('Radarr');
             renderLists();
         });
 

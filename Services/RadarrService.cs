@@ -92,10 +92,50 @@ namespace ComingSoonPlugin.Services
                 InCinemasDate = movie.InCinemas,
                 PhysicalReleaseDate = movie.PhysicalRelease,
                 DigitalReleaseDate = movie.DigitalRelease,
-                PosterUrl = movie.Images?.FirstOrDefault(i => i.CoverType == "poster")?.RemoteUrl
+                PosterUrl = movie.Images?.FirstOrDefault(i => i.CoverType == "poster")?.RemoteUrl,
+                TrailerYoutubeKey = string.IsNullOrWhiteSpace(movie.YouTubeTrailerId) ? null : movie.YouTubeTrailerId
             }).ToList();
 
             _logger.LogInformation("Radarr: {Count} movies fetched within the next {Days}+{Padding} days", results.Count, daysAhead, CalendarQueryPaddingDays);
+
+            return results;
+        }
+
+        /// <summary>
+        /// Collapses movies returned by several Radarr instances (e.g. a 1080p and a 4K server
+        /// tracking the same title) into one item per TMDB id. The first instance wins; fields it
+        /// left empty are filled from the others. Movies without a TMDB id are kept as-is.
+        /// </summary>
+        public static List<CalendarItem> MergeInstances(IEnumerable<CalendarItem> movies)
+        {
+            var results = new List<CalendarItem>();
+            var byTmdbId = new Dictionary<int, CalendarItem>();
+
+            foreach (var movie in movies)
+            {
+                if (!movie.TmdbId.HasValue)
+                {
+                    results.Add(movie);
+                    continue;
+                }
+
+                if (!byTmdbId.TryGetValue(movie.TmdbId.Value, out var existing))
+                {
+                    byTmdbId[movie.TmdbId.Value] = movie;
+                    results.Add(movie);
+                    continue;
+                }
+
+                existing.InCinemasDate ??= movie.InCinemasDate;
+                existing.PhysicalReleaseDate ??= movie.PhysicalReleaseDate;
+                existing.DigitalReleaseDate ??= movie.DigitalReleaseDate;
+                existing.PosterUrl ??= movie.PosterUrl;
+                existing.TrailerYoutubeKey ??= movie.TrailerYoutubeKey;
+                if (string.IsNullOrWhiteSpace(existing.Overview))
+                {
+                    existing.Overview = movie.Overview;
+                }
+            }
 
             return results;
         }
@@ -156,6 +196,8 @@ namespace ComingSoonPlugin.Services
             public DateTime? InCinemas { get; set; }
             public DateTime? PhysicalRelease { get; set; }
             public DateTime? DigitalRelease { get; set; }
+
+            public string? YouTubeTrailerId { get; set; }
 
             public List<RadarrImageDto>? Images { get; set; }
         }

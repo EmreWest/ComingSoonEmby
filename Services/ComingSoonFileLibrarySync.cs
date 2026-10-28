@@ -22,6 +22,8 @@ namespace ComingSoonPlugin.Services
     /// </summary>
     public class ComingSoonFileLibrarySync
     {
+        public const string MainVideoFileName = "video.mp4";
+
         private const string DummyVideoResourceName = "ComingSoonPlugin.Assets.dummy.mp4";
 
         private readonly ILibraryManager _libraryManager;
@@ -154,6 +156,10 @@ namespace ComingSoonPlugin.Services
         }
 
         /// <summary>
+        /// Realtime monitoring is on so Emby picks up added, changed and removed entries as soon
+        /// as a refresh writes them, instead of waiting for its next scheduled library scan.
+        /// Trailers are staged outside the library (see TrailerDownloader) so the monitor never
+        /// sees a half-written video.
         /// Blocks Emby's own online image fetchers for this library so poster.jpg/backdrop.jpg -
         /// which already carry our badge overlay - can never be silently replaced by an unbadged
         /// copy on Emby's own periodic library scan. Metadata fetchers are left at Emby's default
@@ -163,7 +169,7 @@ namespace ComingSoonPlugin.Services
         /// </summary>
         private LibraryOptions BuildLibraryOptions() => new()
         {
-            EnableRealtimeMonitor = false,
+            EnableRealtimeMonitor = true,
             SaveLocalMetadata = false,
             PreferredMetadataLanguage = _language == ComingSoonLanguage.German ? "de" : "en",
             MetadataCountryCode = _language == ComingSoonLanguage.German ? "DE" : "US",
@@ -181,24 +187,31 @@ namespace ComingSoonPlugin.Services
 
         private void WriteEntry(CachedMediaItem item, string folderName)
         {
-            // poster.jpg/backdrop.jpg and (if downloaded) trailers/trailer.mp4 are already written
-            // by RefreshComingSoonTask.EnrichAsync. The main video is always the short bundled
-            // placeholder - Emby needs a playable main file for the entry to show up at all, while
-            // the real trailer lives in trailers/ so Emby exposes its native "Trailer" button.
+            // poster.jpg/backdrop.jpg and the downloaded trailer are already written by
+            // RefreshComingSoonTask.EnrichAsync. Emby needs a playable main file for the entry to
+            // show up at all: either the trailer itself (TrailerIsMainVideo) or the short bundled
+            // placeholder, with the trailer then living in trailers/ as Emby's "Trailer" button.
             var entryDir = Path.Combine(_libraryDataPath, folderName);
             Directory.CreateDirectory(entryDir);
 
-            // Rewrite the main video only when it's missing or isn't already the placeholder (e.g.
-            // an older build wrote the real trailer here as the main video) - keeps the file, and
-            // thus Emby's scan, stable when nothing changed.
-            var videoPath = Path.Combine(entryDir, "video.mp4");
+            // Rewrite the placeholder only when it's missing or the main video is a trailer that
+            // is no longer wanted there - keeps the file, and thus Emby's scan, stable when
+            // nothing changed.
+            var videoPath = Path.Combine(entryDir, MainVideoFileName);
             var dummy = GetDummyVideoBytes();
-            if (dummy is not null && (!File.Exists(videoPath) || new FileInfo(videoPath).Length != dummy.Length))
+            if (!item.TrailerIsMainVideo && dummy is not null && !IsPlaceholderVideo(videoPath))
             {
                 File.WriteAllBytes(videoPath, dummy);
             }
 
             File.WriteAllText(Path.Combine(entryDir, "movie.nfo"), BuildNfo(item, _language));
+        }
+
+        /// <summary>True if path exists and is the bundled placeholder rather than a real trailer.</summary>
+        public static bool IsPlaceholderVideo(string path)
+        {
+            var dummy = GetDummyVideoBytes();
+            return dummy is not null && File.Exists(path) && new FileInfo(path).Length == dummy.Length;
         }
 
         private static byte[]? _dummyVideoBytes;

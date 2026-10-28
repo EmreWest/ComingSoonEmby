@@ -112,42 +112,18 @@
             <details class="csSection">
                 <summary id="CsSonarrSummary"></summary>
                 <div class="verticalSection">
-                    <label class="emby-checkbox-label">
-                        <input is="emby-checkbox" type="checkbox" id="SonarrEnabled" />
-                        <span id="CsSonarrEnabledLabel"></span>
-                    </label>
-                    <div id="CsSonarrEnabledDescription" class="fieldDescription"></div>
-                    <div class="inputContainer">
-                        <input is="emby-input" type="text" id="SonarrUrl" />
-                        <div id="CsSonarrUrlDescription" class="fieldDescription"></div>
-                    </div>
-                    <div class="inputContainer">
-                        <input is="emby-input" type="password" id="SonarrApiKey" />
-                        <div id="CsSonarrApiKeyDescription" class="fieldDescription"></div>
-                    </div>
-                    <button is="emby-button" type="button" id="TestSonarr" class="raised"></button>
-                    <div id="SonarrTestResult" class="fieldDescription" style="display:none; margin-top:0.5em;"></div>
+                    <div id="CsSonarrDescription" class="fieldDescription"></div>
+                    <div id="SonarrInstancesContainer" style="margin-top:0.6em;"></div>
+                    <button is="emby-button" type="button" id="BtnAddSonarr" class="raised" style="margin-top:0.4em;"></button>
                 </div>
             </details>
 
             <details class="csSection">
                 <summary id="CsRadarrSummary"></summary>
                 <div class="verticalSection">
-                    <label class="emby-checkbox-label">
-                        <input is="emby-checkbox" type="checkbox" id="RadarrEnabled" />
-                        <span id="CsRadarrEnabledLabel"></span>
-                    </label>
-                    <div id="CsRadarrEnabledDescription" class="fieldDescription"></div>
-                    <div class="inputContainer">
-                        <input is="emby-input" type="text" id="RadarrUrl" />
-                        <div id="CsRadarrUrlDescription" class="fieldDescription"></div>
-                    </div>
-                    <div class="inputContainer">
-                        <input is="emby-input" type="password" id="RadarrApiKey" />
-                        <div id="CsRadarrApiKeyDescription" class="fieldDescription"></div>
-                    </div>
-                    <button is="emby-button" type="button" id="TestRadarr" class="raised"></button>
-                    <div id="RadarrTestResult" class="fieldDescription" style="display:none; margin-top:0.5em;"></div>
+                    <div id="CsRadarrDescription" class="fieldDescription"></div>
+                    <div id="RadarrInstancesContainer" style="margin-top:0.6em;"></div>
+                    <button is="emby-button" type="button" id="BtnAddRadarr" class="raised" style="margin-top:0.4em;"></button>
                 </div>
             </details>
 
@@ -172,6 +148,11 @@
                         <span id="CsDownloadTrailersLabel"></span>
                     </label>
                     <div id="CsDownloadTrailersDescription" class="fieldDescription"></div>
+                    <label class="emby-checkbox-label">
+                        <input is="emby-checkbox" type="checkbox" id="TrailerAsMainVideo" />
+                        <span id="CsTrailerAsMainVideoLabel"></span>
+                    </label>
+                    <div id="CsTrailerAsMainVideoDescription" class="fieldDescription"></div>
                     <div class="inputContainer">
                         <input is="emby-input" type="text" id="YtDlpPath" />
                         <div id="CsYtDlpDescription" class="fieldDescription"></div>

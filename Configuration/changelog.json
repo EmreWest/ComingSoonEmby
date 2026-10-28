@@ -1,5 +1,15 @@
 [
   {
+    "Version": "1.3.0",
+    "Notes": [
+      "Several Sonarr and Radarr servers can now be configured; their calendars are combined and titles tracked by more than one server appear only once. Existing single-server settings are carried over automatically.",
+      "Coming Soon libraries now have realtime monitoring turned on, so Emby shows changes right after a refresh instead of waiting for its next library scan.",
+      "Pressing Play on an entry now starts its trailer instead of the short placeholder (can be switched back to the separate Trailer button).",
+      "Movie trailers fall back to Radarr's YouTube trailer when TMDB has none, so they also work without a TMDB API key.",
+      "Trailers are downloaded outside the library and only moved in once complete; a timed-out yt-dlp process is now stopped."
+    ]
+  },
+  {
     "Version": "1.2.0",
     "Notes": [
       "Movie dates now prefer the configured region and fall back to a verified US date, visibly marked with a US badge."

@@ -48,6 +48,9 @@ namespace ComingSoonPlugin.Models
         /// <summary>Poster URL as returned directly by Sonarr/Radarr, if any (fallback if TMDB/provider lookup fails).</summary>
         public string? PosterUrl { get; set; }
 
+        /// <summary>YouTube trailer id as returned by Radarr, used when TMDB has none (or no TMDB key is set).</summary>
+        public string? TrailerYoutubeKey { get; set; }
+
         /// <summary>Shallow copy - used to give the same underlying movie a different resolved Date per list.</summary>
         public CalendarItem Clone() => (CalendarItem)MemberwiseClone();
 

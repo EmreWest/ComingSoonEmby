@@ -73,7 +73,7 @@ namespace ComingSoonPlugin.ScheduledTasks
             if (string.IsNullOrWhiteSpace(config.TmdbApiKey))
             {
                 _logger.LogInformation(
-                    "Coming Soon: no TMDB API key configured - regional movie dates, US fallback dates and local trailer download unavailable; Radarr dates will be used.");
+                    "Coming Soon: no TMDB API key configured - regional movie dates, US fallback dates and series trailers unavailable; Radarr dates and trailers will be used.");
             }
 
             var radarrService = new RadarrService(SharedHttpClient, _logger);
@@ -97,38 +97,53 @@ namespace ComingSoonPlugin.ScheduledTasks
                     .ConfigureAwait(false)
                 : config.YtDlpPath;
 
-            var trailerDownloader = new TrailerDownloader(_logger, ytDlpPath, ffmpegPath);
+            // Outside every library folder, so the realtime monitor never sees partial downloads.
+            var trailerDownloader = new TrailerDownloader(
+                _logger, ytDlpPath, ffmpegPath, Path.Combine(Plugin.Instance!.DataFolderPath, "trailer-staging"));
+            trailerDownloader.ClearWorkingDirectory();
 
+            // A failed instance is not an empty calendar: if any instance fails, entries of that
+            // type are preserved, since they may have come from the server that's unreachable.
             var rawMovies = new List<CalendarItem>();
             var radarrFetchSucceeded = true;
-            if (config.RadarrEnabled && !string.IsNullOrWhiteSpace(config.RadarrUrl) && lists.Any(l => l.IncludeMovies))
+            if (lists.Any(l => l.IncludeMovies))
             {
-                try
+                foreach (var instance in EnabledInstances(config.GetRadarrInstances()))
                 {
-                    rawMovies = await radarrService.GetUpcomingRawAsync(
-                        config.RadarrUrl, config.RadarrApiKey, config.DaysAhead, cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        rawMovies.AddRange(await radarrService.GetUpcomingRawAsync(
+                            instance.Url, instance.ApiKey, config.DaysAhead, cancellationToken).ConfigureAwait(false));
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                    {
+                        radarrFetchSucceeded = false;
+                        _logger.LogError(ex, "Coming Soon: Radarr calendar fetch failed for '{Instance}'", instance.DisplayName);
+                    }
                 }
-                catch (Exception ex)
-                {
-                    radarrFetchSucceeded = false;
-                    _logger.LogError(ex, "Coming Soon: Radarr calendar fetch failed");
-                }
+
+                rawMovies = RadarrService.MergeInstances(rawMovies);
             }
 
             var episodes = new List<CalendarItem>();
             var sonarrFetchSucceeded = true;
-            if (config.SonarrEnabled && !string.IsNullOrWhiteSpace(config.SonarrUrl) && lists.Any(l => l.IncludeTvShows))
+            if (lists.Any(l => l.IncludeTvShows))
             {
-                try
+                foreach (var instance in EnabledInstances(config.GetSonarrInstances()))
                 {
-                    episodes = await sonarrService.GetUpcomingAsync(
-                        config.SonarrUrl, config.SonarrApiKey, config.DaysAhead, cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        episodes.AddRange(await sonarrService.GetUpcomingAsync(
+                            instance.Url, instance.ApiKey, config.DaysAhead, cancellationToken).ConfigureAwait(false));
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                    {
+                        sonarrFetchSucceeded = false;
+                        _logger.LogError(ex, "Coming Soon: Sonarr calendar fetch failed for '{Instance}'", instance.DisplayName);
+                    }
                 }
-                catch (Exception ex)
-                {
-                    sonarrFetchSucceeded = false;
-                    _logger.LogError(ex, "Coming Soon: Sonarr calendar fetch failed");
-                }
+
+                episodes = SonarrService.MergeInstances(episodes);
             }
 
             // Metadata (overview/cast/poster URL/trailer key) doesn't depend on which date a list
@@ -277,6 +292,9 @@ namespace ComingSoonPlugin.ScheduledTasks
             }
         }
 
+        private static IEnumerable<ArrInstanceConfig> EnabledInstances(IEnumerable<ArrInstanceConfig> instances) =>
+            instances.Where(i => i.Enabled && !string.IsNullOrWhiteSpace(i.Url));
+
         private static string NormalizeRegion(string? value)
         {
             var region = (value ?? string.Empty).Trim().ToUpperInvariant();
@@ -351,28 +369,10 @@ namespace ComingSoonPlugin.ScheduledTasks
                     .ConfigureAwait(false);
             }
 
-            if (config.DownloadTrailersLocally && !string.IsNullOrWhiteSpace(metadata.TrailerYoutubeKey))
-            {
-                var trailerKey = metadata.TrailerYoutubeKey!;
-                var trailerDir = Path.Combine(entryDir, "trailers");
-
-                // Reuse a trailer already downloaded this run for the same YouTube video (every
-                // episode of a series shares one trailer, and a movie can appear in several lists)
-                // instead of fetching it from YouTube again per folder.
-                if (trailerPathCache.TryGetValue(trailerKey, out var existingTrailer) && File.Exists(existingTrailer))
-                {
-                    trailerDownloader.ReuseExisting(existingTrailer, trailerDir);
-                }
-                else
-                {
-                    var downloaded = await trailerDownloader.DownloadAsync(trailerKey, trailerDir, cancellationToken)
-                        .ConfigureAwait(false);
-                    if (downloaded != null)
-                    {
-                        trailerPathCache[trailerKey] = downloaded;
-                    }
-                }
-            }
+            var trailerIsMainVideo = config.DownloadTrailersLocally
+                && await PlaceTrailerAsync(
+                    metadata.TrailerYoutubeKey ?? calendarItem.TrailerYoutubeKey, entryDir, config.TrailerAsMainVideo,
+                    trailerDownloader, trailerPathCache, cancellationToken).ConfigureAwait(false);
 
             return new CachedMediaItem
             {
@@ -385,8 +385,90 @@ namespace ComingSoonPlugin.ScheduledTasks
                 SeasonNumber = calendarItem.SeasonNumber,
                 EpisodeNumber = calendarItem.EpisodeNumber,
                 EpisodeTitle = calendarItem.EpisodeTitle,
+                TrailerIsMainVideo = trailerIsMainVideo,
                 Cast = metadata.Cast
             };
+        }
+
+        /// <summary>
+        /// Puts the entry's trailer where the current setting wants it: as the main video, or as
+        /// trailers/trailer.mp4 next to the placeholder. A trailer already in place is kept, one
+        /// left in the other location by a setting change is moved, and only otherwise is it
+        /// copied from another entry or downloaded. Returns true if the main video is now the
+        /// trailer, in which case the library sync must not overwrite it with the placeholder.
+        /// </summary>
+        private static async Task<bool> PlaceTrailerAsync(
+            string? trailerKey,
+            string entryDir,
+            bool asMainVideo,
+            TrailerDownloader trailerDownloader,
+            Dictionary<string, string> trailerPathCache,
+            CancellationToken cancellationToken)
+        {
+            var mainVideoPath = Path.Combine(entryDir, ComingSoonFileLibrarySync.MainVideoFileName);
+            var extraDir = Path.Combine(entryDir, "trailers");
+            var extraPath = Path.Combine(extraDir, TrailerDownloader.TrailerFileName);
+            var targetPath = asMainVideo ? mainVideoPath : extraPath;
+            var mainIsTrailer = File.Exists(mainVideoPath) && !ComingSoonFileLibrarySync.IsPlaceholderVideo(mainVideoPath);
+
+            if (asMainVideo && !mainIsTrailer && File.Exists(extraPath))
+            {
+                File.Move(extraPath, mainVideoPath, overwrite: true);
+                TryDeleteEmptyDirectory(extraDir);
+                mainIsTrailer = true;
+            }
+            else if (!asMainVideo && mainIsTrailer && !File.Exists(extraPath))
+            {
+                // The library sync writes the placeholder back into the main video's place.
+                Directory.CreateDirectory(extraDir);
+                File.Move(mainVideoPath, extraPath);
+                mainIsTrailer = false;
+            }
+
+            if (asMainVideo ? mainIsTrailer : File.Exists(extraPath))
+            {
+                if (!string.IsNullOrWhiteSpace(trailerKey))
+                {
+                    trailerPathCache.TryAdd(trailerKey!, targetPath);
+                }
+
+                return asMainVideo;
+            }
+
+            if (string.IsNullOrWhiteSpace(trailerKey))
+            {
+                return false;
+            }
+
+            // Reuse a trailer already downloaded this run for the same YouTube video (every
+            // episode of a series shares one trailer, and a movie can appear in several lists)
+            // instead of fetching it from YouTube again per folder.
+            var placed = trailerPathCache.TryGetValue(trailerKey!, out var existingTrailer) && File.Exists(existingTrailer)
+                ? trailerDownloader.ReuseExisting(existingTrailer, targetPath)
+                : await trailerDownloader.DownloadAsync(trailerKey!, targetPath, cancellationToken).ConfigureAwait(false);
+
+            if (placed is null)
+            {
+                return false;
+            }
+
+            trailerPathCache.TryAdd(trailerKey!, placed);
+            return asMainVideo;
+        }
+
+        private static void TryDeleteEmptyDirectory(string path)
+        {
+            try
+            {
+                if (Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any())
+                {
+                    Directory.Delete(path);
+                }
+            }
+            catch (Exception)
+            {
+                // Harmless leftover; the next refresh tries again.
+            }
         }
     }
 }

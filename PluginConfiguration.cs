@@ -51,9 +51,22 @@ namespace ComingSoonPlugin
         public bool IncludeTvShows { get; set; } = true;
     }
 
+    /// <summary>One Sonarr or Radarr server. Several of each can be configured.</summary>
+    public class ArrInstanceConfig
+    {
+        public string Name { get; set; } = string.Empty;
+        public bool Enabled { get; set; } = true;
+        public string Url { get; set; } = string.Empty;
+        public string ApiKey { get; set; } = string.Empty;
+
+        public string DisplayName => string.IsNullOrWhiteSpace(Name) ? Url : Name;
+    }
+
     /// <summary>Persisted plugin settings, edited via the Dashboard config page.</summary>
     public class PluginConfiguration : BasePluginConfiguration
     {
+        // Pre-1.3 single-server settings. Only read while the matching *Instances list is empty,
+        // so an existing setup keeps working until the config page saves it as an instance list.
         public bool SonarrEnabled { get; set; } = false;
         public string SonarrUrl { get; set; } = "http://localhost:8989";
         public string SonarrApiKey { get; set; } = string.Empty;
@@ -61,6 +74,31 @@ namespace ComingSoonPlugin
         public bool RadarrEnabled { get; set; } = false;
         public string RadarrUrl { get; set; } = "http://localhost:7878";
         public string RadarrApiKey { get; set; } = string.Empty;
+
+        /// <summary>Initialised empty for the same XmlSerializer reason as <see cref="Lists"/>.</summary>
+        public List<ArrInstanceConfig> SonarrInstances { get; set; } = new();
+
+        /// <summary>Initialised empty for the same XmlSerializer reason as <see cref="Lists"/>.</summary>
+        public List<ArrInstanceConfig> RadarrInstances { get; set; } = new();
+
+        public List<ArrInstanceConfig> GetSonarrInstances() =>
+            ResolveInstances(SonarrInstances, SonarrEnabled, SonarrUrl, SonarrApiKey, "Sonarr");
+
+        public List<ArrInstanceConfig> GetRadarrInstances() =>
+            ResolveInstances(RadarrInstances, RadarrEnabled, RadarrUrl, RadarrApiKey, "Radarr");
+
+        private static List<ArrInstanceConfig> ResolveInstances(
+            List<ArrInstanceConfig>? instances, bool legacyEnabled, string legacyUrl, string legacyApiKey, string legacyName)
+        {
+            if (instances is { Count: > 0 })
+            {
+                return instances;
+            }
+
+            return legacyEnabled
+                ? new List<ArrInstanceConfig> { new() { Name = legacyName, Url = legacyUrl, ApiKey = legacyApiKey } }
+                : new List<ArrInstanceConfig>();
+        }
 
         /// <summary>
         /// Initialised empty on purpose: the XmlSerializer Emby uses *appends* deserialised
@@ -99,6 +137,14 @@ namespace ComingSoonPlugin
 
         /// <summary>Download trailers locally via yt-dlp instead of only caching the YouTube key.</summary>
         public bool DownloadTrailersLocally { get; set; } = true;
+
+        /// <summary>
+        /// Use the downloaded trailer as the entry's main video, so pressing Play starts the
+        /// trailer. When off, the trailer is a separate extra (Emby's "Trailer" button) and the
+        /// main video stays the short placeholder. Entries without a trailer always keep the
+        /// placeholder.
+        /// </summary>
+        public bool TrailerAsMainVideo { get; set; } = true;
 
         /// <summary>
         /// Path to a yt-dlp executable/binary. Default "yt-dlp" tries PATH first, then falls back

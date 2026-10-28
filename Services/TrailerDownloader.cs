@@ -11,9 +11,14 @@ using Microsoft.Extensions.Logging;
 namespace ComingSoonPlugin.Services
 {
     /// <summary>
-    /// Shells out to yt-dlp to pull a trailer down into a "trailers" subfolder, so Emby indexes it
-    /// as a local trailer extra (its native "Trailer" button) that plays through Emby's own player
-    /// instead of opening YouTube - which kicks tvOS/Apple TV users into a separate app.
+    /// Shells out to yt-dlp to pull a trailer down so it plays through Emby's own player instead
+    /// of opening YouTube - which kicks tvOS/Apple TV users into a separate app. Depending on the
+    /// caller the file becomes the entry's main video or a local trailer extra ("trailers"
+    /// subfolder, Emby's native "Trailer" button).
+    ///
+    /// Every download and copy is staged in a private working directory outside the libraries
+    /// and only moved into place once complete. The libraries use Emby's realtime monitor, which
+    /// would otherwise pick up half-written files and yt-dlp's .part/fragment files.
     /// </summary>
     public class TrailerDownloader
     {
@@ -22,61 +27,58 @@ namespace ComingSoonPlugin.Services
         private readonly ILogger _logger;
         private readonly string _ytDlpPath;
         private readonly string _ffmpegPath;
+        private readonly string _workingDirectory;
         private static readonly TimeSpan ProcessTimeout = TimeSpan.FromMinutes(5);
 
-        public TrailerDownloader(ILogger logger, string ytDlpPath, string ffmpegPath)
+        public TrailerDownloader(ILogger logger, string ytDlpPath, string ffmpegPath, string workingDirectory)
         {
             _logger = logger;
             _ytDlpPath = string.IsNullOrWhiteSpace(ytDlpPath) ? "yt-dlp" : ytDlpPath;
             _ffmpegPath = string.IsNullOrWhiteSpace(ffmpegPath) ? "ffmpeg" : ffmpegPath;
+            _workingDirectory = workingDirectory;
         }
 
+        /// <summary>Removes staging folders left behind by a refresh that was interrupted.</summary>
+        public void ClearWorkingDirectory() => TryDeleteDirectory(_workingDirectory);
+
         /// <summary>
-        /// Copies an already-downloaded trailer into trailerDirectory instead of fetching it again,
-        /// used when several episodes of the same series (or the same movie in several lists) share
-        /// one trailer. Returns the new path, or null if the copy failed.
+        /// Copies an already-downloaded trailer to outputPath instead of fetching it again, used
+        /// when several episodes of the same series (or the same movie in several lists) share one
+        /// trailer. Returns outputPath, or null if the copy failed.
         /// </summary>
-        public string? ReuseExisting(string existingTrailerPath, string trailerDirectory)
+        public string? ReuseExisting(string existingTrailerPath, string outputPath)
         {
-            Directory.CreateDirectory(trailerDirectory);
-            var outputPath = Path.Combine(trailerDirectory, TrailerFileName);
-
-            if (File.Exists(outputPath))
-            {
-                return outputPath;
-            }
-
+            var stagingDirectory = CreateStagingDirectory();
             try
             {
-                File.Copy(existingTrailerPath, outputPath, overwrite: true);
-                return outputPath;
+                var stagedPath = Path.Combine(stagingDirectory, TrailerFileName);
+                File.Copy(existingTrailerPath, stagedPath);
+                return Publish(stagedPath, outputPath);
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "Could not reuse trailer from {Source} into {Dir}", existingTrailerPath, trailerDirectory);
+                _logger.LogDebug(ex, "Could not reuse trailer from {Source} for {Target}", existingTrailerPath, outputPath);
                 return null;
+            }
+            finally
+            {
+                TryDeleteDirectory(stagingDirectory);
             }
         }
 
         /// <summary>
-        /// Downloads the given YouTube video into trailerDirectory/trailer.mp4. Returns the path on
-        /// success, or null if the download failed or yt-dlp isn't available - a missing file just
-        /// means Emby shows the entry without a trailer, and the next refresh retries.
+        /// Downloads the given YouTube video to outputPath, replacing whatever file is there.
+        /// Returns the path on success, or null if the download failed or yt-dlp isn't available -
+        /// the caller keeps the entry without a trailer, and the next refresh retries.
         /// </summary>
         public async Task<string?> DownloadAsync(
             string youtubeKey,
-            string trailerDirectory,
+            string outputPath,
             CancellationToken cancellationToken)
         {
-            Directory.CreateDirectory(trailerDirectory);
-            var outputPath = Path.Combine(trailerDirectory, TrailerFileName);
-
-            if (File.Exists(outputPath))
-            {
-                return outputPath;
-            }
-
             var youtubeUrl = $"https://www.youtube.com/watch?v={youtubeKey}";
+            var stagingDirectory = CreateStagingDirectory();
+            var stagedPath = Path.Combine(stagingDirectory, TrailerFileName);
 
             var startInfo = new ProcessStartInfo
             {
@@ -112,12 +114,12 @@ namespace ComingSoonPlugin.Services
             }
 
             startInfo.ArgumentList.Add("-o");
-            startInfo.ArgumentList.Add(outputPath);
+            startInfo.ArgumentList.Add(stagedPath);
             startInfo.ArgumentList.Add(youtubeUrl);
 
+            using var process = new Process { StartInfo = startInfo };
             try
             {
-                using var process = new Process { StartInfo = startInfo };
                 var stdErr = new StringBuilder();
                 process.ErrorDataReceived += (_, e) => { if (e.Data != null) stdErr.AppendLine(e.Data); };
 
@@ -134,24 +136,27 @@ namespace ComingSoonPlugin.Services
                     _logger.LogWarning(
                         "yt-dlp exited with code {Code} for {Url}: {Error}",
                         process.ExitCode, youtubeUrl, stdErr.ToString());
-                    CleanupOrphanFragments(trailerDirectory);
                     return null;
                 }
 
-                if (!File.Exists(outputPath))
+                if (!File.Exists(stagedPath))
                 {
-                    _logger.LogWarning("yt-dlp reported success but output file is missing: {Path}", outputPath);
-                    CleanupOrphanFragments(trailerDirectory);
+                    _logger.LogWarning("yt-dlp reported success but output file is missing: {Path}", stagedPath);
                     return null;
                 }
 
-                CleanupOrphanFragments(trailerDirectory);
-                return outputPath;
+                return Publish(stagedPath, outputPath);
             }
             catch (OperationCanceledException)
             {
+                // WaitForExitAsync only stops waiting - the process itself keeps running.
+                TryKill(process);
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+
                 _logger.LogWarning("yt-dlp download timed out after {Timeout} for {Url}", ProcessTimeout, youtubeUrl);
-                TryDelete(outputPath);
                 return null;
             }
             catch (Exception ex)
@@ -159,6 +164,26 @@ namespace ComingSoonPlugin.Services
                 _logger.LogWarning(ex, "Failed to run yt-dlp (path: {Path}) - is it installed and reachable?", _ytDlpPath);
                 return null;
             }
+            finally
+            {
+                TryDeleteDirectory(stagingDirectory);
+            }
+        }
+
+        // The working directory sits next to the library folders on the same volume, so this is a
+        // rename: the library only ever sees the complete file appear.
+        private static string Publish(string stagedPath, string outputPath)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+            File.Move(stagedPath, outputPath, overwrite: true);
+            return outputPath;
+        }
+
+        private string CreateStagingDirectory()
+        {
+            var path = Path.Combine(_workingDirectory, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(path);
+            return path;
         }
 
         /// <summary>
@@ -204,35 +229,35 @@ namespace ComingSoonPlugin.Services
                 .Any(dir => File.Exists(Path.Combine(dir, exe)));
         }
 
-        // A failed merge leaves the separate streams behind as trailer.fNNN.mp4 / trailer.fNNN.m4a
-        // - remove them so a later refresh retries cleanly and they don't pile up on disk.
-        private void CleanupOrphanFragments(string trailerDirectory)
+        private void TryKill(Process process)
         {
             try
             {
-                foreach (var file in Directory.EnumerateFiles(trailerDirectory, "trailer.f*"))
+                if (!process.HasExited)
                 {
-                    File.Delete(file);
+                    process.Kill(entireProcessTree: true);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "Could not clean up orphan yt-dlp fragments in {Dir}", trailerDirectory);
+                _logger.LogDebug(ex, "Could not stop timed-out yt-dlp process");
             }
         }
 
-        private void TryDelete(string path)
+        // Also removes the separate trailer.fNNN.mp4 / .m4a streams a failed merge leaves behind,
+        // so a later refresh retries cleanly and they don't pile up on disk.
+        private void TryDeleteDirectory(string path)
         {
             try
             {
-                if (File.Exists(path))
+                if (Directory.Exists(path))
                 {
-                    File.Delete(path);
+                    Directory.Delete(path, recursive: true);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "Could not clean up partial download at {Path}", path);
+                _logger.LogDebug(ex, "Could not clean up trailer staging folder {Path}", path);
             }
         }
     }
