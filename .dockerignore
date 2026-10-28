@@ -1,0 +1,9 @@
+.git
+.github
+.claude
+bin
+obj
+lib
+*.user
+*.suo
+deploy.sh

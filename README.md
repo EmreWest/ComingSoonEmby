@@ -1,7 +1,30 @@
 # Coming Soon for Emby
 
+> **About this fork:** This is a fork of [mrt187/ComingSoonEmby](https://github.com/mrt187/ComingSoonEmby).
+> It adds support for several Sonarr/Radarr servers, realtime library monitoring, trailers that play
+> in place of the placeholder video, and a ready-made Docker image for installing the plugin with
+> docker compose. See [What's new in this fork](#whats-new-in-this-fork). For the original plugin,
+> issues and upstream releases, use the original repository.
+
 Coming Soon creates one or more Emby home-screen rows containing upcoming movies and TV episodes
 from one or more Radarr and Sonarr servers.
+
+## What's new in this fork
+
+- **Multiple Sonarr and Radarr servers.** Add as many servers as you like, e.g. a 1080p and a 4K
+  Radarr. Their calendars are combined, and a title tracked by several servers appears only once.
+  If one server is unreachable, existing entries of that type are kept. Existing single-server
+  settings are carried over automatically.
+- **Realtime monitoring.** The Coming Soon libraries are created with Emby's realtime monitor
+  turned on, so new, changed and expired entries show up right after a refresh instead of waiting
+  for the next library scan. Existing libraries are switched over on the next refresh.
+- **Trailers play instead of the placeholder.** Trailers are downloaded from YouTube and, by
+  default, become the entry's video, so pressing Play starts the trailer. This can be switched back
+  to Emby's separate "Trailer" button under **TMDB & Trailers**.
+- **Trailers without a TMDB key.** Movie trailers fall back to the YouTube trailer Radarr knows
+  about. TV show trailers still need a TMDB key.
+- **Docker image.** `ghcr.io/emrewest/comingsoonemby` installs the plugin from docker compose, see
+  [Installation with docker compose](#installation-with-docker-compose).
 
 ## Supported Emby versions
 
@@ -33,12 +56,48 @@ movie trailers use the YouTube trailer Radarr knows about.
 
 ## Installation
 
-1. Download `ComingSoonPlugin.dll` from the latest GitHub release.
+1. Download `ComingSoonPlugin.dll` from the latest
+   [release of this fork](https://github.com/EmreWest/ComingSoonEmby/releases), or use docker
+   compose as described below.
 2. Copy it into the Emby Server `plugins` folder.
 3. Restart Emby Server.
 4. Open **Dashboard > Plugins > Coming Soon** and add your Sonarr/Radarr servers.
 5. Run **Refresh Coming Soon** once under **Scheduled Tasks**.
 6. Add the created library or libraries to the desired users' home screens.
+
+## Installation with docker compose
+
+The image `ghcr.io/emrewest/comingsoonemby` contains only the plugin. It copies
+`ComingSoonPlugin.dll` into Emby's plugins folder and exits, so Emby starts with the plugin
+installed. Mount the same plugins folder into both containers:
+
+```yaml
+services:
+  comingsoon-plugin:
+    image: ghcr.io/emrewest/comingsoonemby:latest
+    volumes:
+      # Official emby/embyserver image: <config>/plugins
+      # linuxserver/emby image:         <config>/data/plugins
+      - ./emby/config/plugins:/plugins
+    restart: "no"
+
+  emby:
+    image: emby/embyserver:latest
+    volumes:
+      - ./emby/config:/config
+    depends_on:
+      comingsoon-plugin:
+        condition: service_completed_successfully
+        restart: true
+    # ...ports, media volumes etc. as before
+```
+
+To update, run `docker compose pull && docker compose up -d`. When the plugin image changed,
+compose reruns the installer and restarts Emby. Set `PUID`/`PGID` on the installer if the copied
+file should belong to the user Emby runs as.
+
+Tags: `latest` follows `main`, `1.3.0` / `1.3` are published for release tags, and `sha-<commit>`
+for every build.
 
 ## Where files are stored
 
