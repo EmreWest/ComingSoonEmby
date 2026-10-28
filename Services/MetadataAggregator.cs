@@ -24,23 +24,27 @@ namespace ComingSoonPlugin.Services
         }
 
         public async Task<MetadataResult> GetForMovieAsync(
-            int tmdbId, IReadOnlyList<string> trailerLanguages, CancellationToken cancellationToken)
+            int tmdbId, IReadOnlyList<string> trailerLanguages, IReadOnlyList<string> posterLanguages,
+            CancellationToken cancellationToken)
         {
             var embyResult = await _embyProvider.TryGetMovieMetadataAsync(tmdbId, cancellationToken).ConfigureAwait(false);
-            var tmdbResult = await _tmdb.GetMovieMetadataAsync(tmdbId, trailerLanguages, cancellationToken).ConfigureAwait(false);
+            var tmdbResult = await _tmdb.GetMovieMetadataAsync(tmdbId, trailerLanguages, posterLanguages, cancellationToken)
+                .ConfigureAwait(false);
 
             return Merge(embyResult, tmdbResult);
         }
 
         public async Task<MetadataResult> GetForSeriesAsync(
-            int tvdbId, IReadOnlyList<string> trailerLanguages, CancellationToken cancellationToken)
+            int tvdbId, IReadOnlyList<string> trailerLanguages, IReadOnlyList<string> posterLanguages,
+            CancellationToken cancellationToken)
         {
             var embyResult = await _embyProvider.TryGetSeriesMetadataAsync(tvdbId, cancellationToken).ConfigureAwait(false);
 
             // TMDB needs its own tv id, not tvdbId directly - bridge via /find.
             var tmdbTvId = await _tmdb.FindTmdbTvIdByTvdbIdAsync(tvdbId, cancellationToken).ConfigureAwait(false);
             var tmdbResult = tmdbTvId.HasValue
-                ? await _tmdb.GetSeriesMetadataAsync(tmdbTvId.Value, trailerLanguages, cancellationToken).ConfigureAwait(false)
+                ? await _tmdb.GetSeriesMetadataAsync(tmdbTvId.Value, trailerLanguages, posterLanguages, cancellationToken)
+                    .ConfigureAwait(false)
                 : null;
 
             if (!tmdbTvId.HasValue)

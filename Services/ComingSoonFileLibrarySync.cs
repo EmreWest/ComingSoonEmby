@@ -77,9 +77,14 @@ namespace ComingSoonPlugin.Services
             CleanupStaleFolders(expectedFolders, removeStaleMovies, removeStaleEpisodes);
             _libraryManager.QueueLibraryScan();
 
-            if (forceImageRefresh)
+            // A plain scan doesn't notice changed image content, so entries whose artwork source
+            // changed get the same forced refresh a language switch gives every entry.
+            var refreshFolders = forceImageRefresh
+                ? expectedFolders
+                : items.Where(i => i.ImagesChanged).Select(BuildFolderName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (refreshFolders.Count > 0)
             {
-                ForceItemRefresh(expectedFolders);
+                ForceItemRefresh(refreshFolders);
             }
 
             _logger.LogInformation(

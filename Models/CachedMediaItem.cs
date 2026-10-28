@@ -31,6 +31,9 @@ namespace ComingSoonPlugin.Models
         /// <summary>The entry's main video is the downloaded trailer, not the bundled placeholder.</summary>
         public bool TrailerIsMainVideo { get; set; }
 
+        /// <summary>A new source image was fetched, so Emby must re-read this entry's images.</summary>
+        public bool ImagesChanged { get; set; }
+
         public List<CastMember> Cast { get; set; } = new();
     }
 }

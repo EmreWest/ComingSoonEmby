@@ -38,25 +38,27 @@ namespace ComingSoonPlugin.Services
         private bool HasApiKey => !string.IsNullOrWhiteSpace(_apiKey);
 
         public async Task<MetadataResult?> GetMovieMetadataAsync(
-            int tmdbId, IReadOnlyList<string> trailerLanguages, CancellationToken cancellationToken)
+            int tmdbId, IReadOnlyList<string> trailerLanguages, IReadOnlyList<string> posterLanguages,
+            CancellationToken cancellationToken)
         {
             if (!HasApiKey)
             {
                 return null;
             }
 
-            return await FetchAndMapAsync("movie", tmdbId, trailerLanguages, cancellationToken).ConfigureAwait(false);
+            return await FetchAndMapAsync("movie", tmdbId, trailerLanguages, posterLanguages, cancellationToken).ConfigureAwait(false);
         }
 
         public async Task<MetadataResult?> GetSeriesMetadataAsync(
-            int tmdbTvId, IReadOnlyList<string> trailerLanguages, CancellationToken cancellationToken)
+            int tmdbTvId, IReadOnlyList<string> trailerLanguages, IReadOnlyList<string> posterLanguages,
+            CancellationToken cancellationToken)
         {
             if (!HasApiKey)
             {
                 return null;
             }
 
-            return await FetchAndMapAsync("tv", tmdbTvId, trailerLanguages, cancellationToken).ConfigureAwait(false);
+            return await FetchAndMapAsync("tv", tmdbTvId, trailerLanguages, posterLanguages, cancellationToken).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -165,17 +167,21 @@ namespace ComingSoonPlugin.Services
         }
 
         /// <summary>
-        /// Fetches details, cast and videos in one request. The trailer is picked by language:
-        /// the requested languages in order, then English, then the title's original language
-        /// (e.g. a Japanese PV for an anime), which needs a second request since TMDB only returns
-        /// videos in the languages asked for.
+        /// Fetches details, cast, videos and posters in one request. The trailer is picked by
+        /// language: the requested languages in order, then English, then the title's original
+        /// language (e.g. a Japanese PV for an anime), which needs a second request since TMDB
+        /// only returns videos in the languages asked for. The poster likewise follows
+        /// posterLanguages, then English, then a textless poster.
         /// </summary>
         private async Task<MetadataResult?> FetchAndMapAsync(
-            string kind, int id, IReadOnlyList<string> trailerLanguages, CancellationToken cancellationToken)
+            string kind, int id, IReadOnlyList<string> trailerLanguages, IReadOnlyList<string> posterLanguages,
+            CancellationToken cancellationToken)
         {
             var videoLanguages = trailerLanguages.Append("en").Distinct().ToList();
-            var url = $"{BaseUrl}/{kind}/{id}?api_key={_apiKey}&language={_language}&append_to_response=credits,videos" +
-                      $"&include_video_language={string.Join(",", videoLanguages)}";
+            var imageLanguages = posterLanguages.Append("en").Distinct().ToList();
+            var url = $"{BaseUrl}/{kind}/{id}?api_key={_apiKey}&language={_language}&append_to_response=credits,videos,images" +
+                      $"&include_video_language={string.Join(",", videoLanguages)}" +
+                      $"&include_image_language={string.Join(",", imageLanguages)},null";
 
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
@@ -201,10 +207,12 @@ namespace ComingSoonPlugin.Services
                 trailer = PickTrailer(originalVideos, new[] { originalLanguage });
             }
 
+            var posterPath = PickPoster(dto.Images?.Posters, imageLanguages) ?? dto.PosterPath;
+
             return new MetadataResult
             {
                 Overview = dto.Overview,
-                PosterUrl = string.IsNullOrEmpty(dto.PosterPath) ? null : ImageBaseUrl + dto.PosterPath,
+                PosterUrl = string.IsNullOrEmpty(posterPath) ? null : ImageBaseUrl + posterPath,
                 BackdropUrl = string.IsNullOrEmpty(dto.BackdropPath) ? null : BackdropImageBaseUrl + dto.BackdropPath,
                 TrailerYoutubeKey = trailer?.Key,
                 TrailerLanguage = trailer?.Language,
@@ -243,6 +251,32 @@ namespace ComingSoonPlugin.Services
                 if (match is not null)
                 {
                     return match;
+                }
+            }
+
+            return null;
+        }
+
+        // First language with a poster wins, then a textless one; within a language the
+        // best-rated poster.
+        private static string? PickPoster(IEnumerable<TmdbImageDto>? posters, IEnumerable<string> languages)
+        {
+            var candidates = posters?.Where(p => !string.IsNullOrEmpty(p.FilePath)).ToList();
+            if (candidates is not { Count: > 0 })
+            {
+                return null;
+            }
+
+            foreach (var language in languages.Append(null))
+            {
+                var match = candidates
+                    .Where(p => string.Equals(p.Language, language, StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(p => p.VoteAverage)
+                    .ThenByDescending(p => p.VoteCount)
+                    .FirstOrDefault();
+                if (match is not null)
+                {
+                    return match.FilePath;
                 }
             }
 
@@ -300,6 +334,27 @@ namespace ComingSoonPlugin.Services
 
             public TmdbCreditsDto? Credits { get; set; }
             public TmdbVideosDto? Videos { get; set; }
+            public TmdbImagesDto? Images { get; set; }
+        }
+
+        private class TmdbImagesDto
+        {
+            public List<TmdbImageDto>? Posters { get; set; }
+        }
+
+        private class TmdbImageDto
+        {
+            [JsonPropertyName("file_path")]
+            public string? FilePath { get; set; }
+
+            [JsonPropertyName("iso_639_1")]
+            public string? Language { get; set; }
+
+            [JsonPropertyName("vote_average")]
+            public double VoteAverage { get; set; }
+
+            [JsonPropertyName("vote_count")]
+            public int VoteCount { get; set; }
         }
 
         private class TmdbCreditsDto

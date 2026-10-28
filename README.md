@@ -28,6 +28,11 @@ from one or more Radarr and Sonarr servers.
   languages, e.g. `ja` for an anime Sonarr and `de` for the others. If no trailer exists in those
   languages, English and then the title's original language are used. Subtitles uploaded with the
   YouTube video (never automatic captions) can be saved alongside, e.g. `de`.
+- **Posters in the right language.** Titles that are already in your Emby libraries (e.g. the series
+  of an upcoming episode) reuse your existing poster and backdrop (can be turned off). Other posters
+  follow the language set for the title in Radarr (quality profile language) or Sonarr v3 (language
+  profile), then the badge language.
+- **Sidebar entry.** The settings page is listed in the Dashboard sidebar, not only under Plugins.
 - **JavaScript runtime for YouTube.** yt-dlp needs one to download from YouTube. Deno is downloaded
   automatically into the plugin's tools folder (a custom runtime can be set), and the managed yt-dlp
   copy is now updated weekly.

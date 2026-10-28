@@ -52,6 +52,12 @@ namespace ComingSoonPlugin.Models
         /// <summary>YouTube trailer id as returned by Radarr, used when TMDB has none (or no TMDB key is set).</summary>
         public string? TrailerYoutubeKey { get; set; }
 
+        /// <summary>
+        /// ISO 639-1 language set for this title in Radarr/Sonarr (profile language), used for the
+        /// poster. Null when the profile has none ("Any") or the instance doesn't expose one.
+        /// </summary>
+        public string? ArtworkLanguage { get; set; }
+
         /// <summary>Preferred trailer languages of the Sonarr/Radarr instance this item came from.</summary>
         public List<string> TrailerLanguages { get; set; } = new();
 

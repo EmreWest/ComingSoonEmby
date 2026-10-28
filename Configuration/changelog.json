@@ -1,5 +1,14 @@
 [
   {
+    "Version": "1.4.0",
+    "Notes": [
+      "Coming Soon now has its own entry in the Dashboard sidebar.",
+      "Titles that already exist in your Emby libraries (e.g. the series of an upcoming episode) use your existing poster and backdrop. Can be turned off under Appearance.",
+      "Other posters are downloaded in the language set for the title in Radarr (quality profile language, \"Original\" = original language) or Sonarr v3 (language profile), falling back to the badge language, then English, then a textless poster.",
+      "Posters and backdrops are replaced when their source changes; existing entries are updated once after this update."
+    ]
+  },
+  {
     "Version": "1.3.1",
     "Notes": [
       "Fixes YouTube trailer downloads failing with \"Requested format is not available\": yt-dlp now gets a JavaScript runtime. Deno is downloaded automatically into the plugin's tools folder like yt-dlp, checked on start and passed via --js-runtimes.",

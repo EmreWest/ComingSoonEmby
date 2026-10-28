@@ -82,6 +82,9 @@ namespace ComingSoonPlugin.Services
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             var movies = JsonSerializer.Deserialize<List<RadarrMovieDto>>(json, JsonOptions) ?? new List<RadarrMovieDto>();
+            var profileLanguages = movies.Count > 0
+                ? await GetProfileLanguagesAsync(baseUrl, apiKey, cancellationToken).ConfigureAwait(false)
+                : new Dictionary<int, string?>();
 
             var results = movies.Select(movie => new CalendarItem
             {
@@ -93,12 +96,39 @@ namespace ComingSoonPlugin.Services
                 PhysicalReleaseDate = movie.PhysicalRelease,
                 DigitalReleaseDate = movie.DigitalRelease,
                 PosterUrl = movie.Images?.FirstOrDefault(i => i.CoverType == "poster")?.RemoteUrl,
-                TrailerYoutubeKey = string.IsNullOrWhiteSpace(movie.YouTubeTrailerId) ? null : movie.YouTubeTrailerId
+                TrailerYoutubeKey = string.IsNullOrWhiteSpace(movie.YouTubeTrailerId) ? null : movie.YouTubeTrailerId,
+                ArtworkLanguage = ArrLanguages.ToIsoCode(
+                    profileLanguages.GetValueOrDefault(movie.QualityProfileId), movie.OriginalLanguage?.Name)
             }).ToList();
 
             _logger.LogInformation("Radarr: {Count} movies fetched within the next {Days}+{Padding} days", results.Count, daysAhead, CalendarQueryPaddingDays);
 
             return results;
+        }
+
+        /// <summary>
+        /// Language name of each quality profile ("German", "Original", "Any", ...). Optional
+        /// extra: a failure only means posters fall back to the plugin language.
+        /// </summary>
+        private async Task<Dictionary<int, string?>> GetProfileLanguagesAsync(
+            string baseUrl, string apiKey, CancellationToken cancellationToken)
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl.TrimEnd('/')}/api/v3/qualityprofile");
+                request.Headers.Add("X-Api-Key", apiKey);
+                using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+
+                var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                return (JsonSerializer.Deserialize<List<RadarrProfileDto>>(json, JsonOptions) ?? new List<RadarrProfileDto>())
+                    .ToDictionary(p => p.Id, p => p.Language?.Name);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogDebug(ex, "Radarr: could not read quality profile languages");
+                return new Dictionary<int, string?>();
+            }
         }
 
         /// <summary>
@@ -131,6 +161,7 @@ namespace ComingSoonPlugin.Services
                 existing.DigitalReleaseDate ??= movie.DigitalReleaseDate;
                 existing.PosterUrl ??= movie.PosterUrl;
                 existing.TrailerYoutubeKey ??= movie.TrailerYoutubeKey;
+                existing.ArtworkLanguage ??= movie.ArtworkLanguage;
                 if (string.IsNullOrWhiteSpace(existing.Overview))
                 {
                     existing.Overview = movie.Overview;
@@ -199,7 +230,22 @@ namespace ComingSoonPlugin.Services
 
             public string? YouTubeTrailerId { get; set; }
 
+            public int QualityProfileId { get; set; }
+
+            public RadarrLanguageDto? OriginalLanguage { get; set; }
+
             public List<RadarrImageDto>? Images { get; set; }
+        }
+
+        private class RadarrProfileDto
+        {
+            public int Id { get; set; }
+            public RadarrLanguageDto? Language { get; set; }
+        }
+
+        private class RadarrLanguageDto
+        {
+            public string? Name { get; set; }
         }
 
         private class RadarrImageDto

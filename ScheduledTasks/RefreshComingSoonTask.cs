@@ -112,6 +112,10 @@ namespace ComingSoonPlugin.ScheduledTasks
             // several lists) once per run and copies it to the others.
             var trailerPlacer = new TrailerPlacer(trailerDownloader, _logger);
 
+            var libraryArtwork = config.UseLibraryArtwork
+                ? new EmbyLibraryArtworkService(_libraryManager, _logger, Plugin.Instance!.DataFolderPath)
+                : null;
+
             // A failed instance is not an empty calendar: if any instance fails, entries of that
             // type are preserved, since they may have come from the server that's unreachable.
             var rawMovies = new List<CalendarItem>();
@@ -257,7 +261,7 @@ namespace ComingSoonPlugin.ScheduledTasks
                     {
                         var badgeKind = BadgeKindFor(calendarItem.Type, list.MovieDateType);
                         var cached = await EnrichAsync(
-                            calendarItem, aggregator, imageOverlayService, trailerPlacer, config,
+                            calendarItem, aggregator, imageOverlayService, trailerPlacer, libraryArtwork, config,
                             libraryDataPath, metadataCache, badgeKind, cancellationToken).ConfigureAwait(false);
 
                         if (cached != null)
@@ -351,6 +355,7 @@ namespace ComingSoonPlugin.ScheduledTasks
             MetadataAggregator aggregator,
             ImageOverlayService imageOverlayService,
             TrailerPlacer trailerPlacer,
+            EmbyLibraryArtworkService? libraryArtwork,
             PluginConfiguration config,
             string libraryDataPath,
             Dictionary<string, MetadataResult> metadataCache,
@@ -367,13 +372,22 @@ namespace ComingSoonPlugin.ScheduledTasks
                 return null;
             }
 
-            // The trailer pick depends on the source instance's languages, the rest doesn't.
-            var metadataCacheKey = calendarItem.MetadataCacheKey + "|" + string.Join(",", calendarItem.TrailerLanguages);
+            // Poster language: the one set for the title in Radarr/Sonarr, then the plugin language.
+            var posterLanguages = new[] { calendarItem.ArtworkLanguage, config.Language == ComingSoonLanguage.German ? "de" : "en" }
+                .OfType<string>()
+                .Distinct()
+                .ToList();
+
+            // Trailer and poster picks depend on the source instance's languages, the rest doesn't.
+            var metadataCacheKey = calendarItem.MetadataCacheKey + "|" + string.Join(",", calendarItem.TrailerLanguages)
+                + "|" + string.Join(",", posterLanguages);
             if (!metadataCache.TryGetValue(metadataCacheKey, out var metadata))
             {
                 metadata = calendarItem.Type == CalendarItemType.Movie
-                    ? await aggregator.GetForMovieAsync(calendarItem.TmdbId!.Value, calendarItem.TrailerLanguages, cancellationToken).ConfigureAwait(false)
-                    : await aggregator.GetForSeriesAsync(calendarItem.TvdbId!.Value, calendarItem.TrailerLanguages, cancellationToken).ConfigureAwait(false);
+                    ? await aggregator.GetForMovieAsync(
+                        calendarItem.TmdbId!.Value, calendarItem.TrailerLanguages, posterLanguages, cancellationToken).ConfigureAwait(false)
+                    : await aggregator.GetForSeriesAsync(
+                        calendarItem.TvdbId!.Value, calendarItem.TrailerLanguages, posterLanguages, cancellationToken).ConfigureAwait(false);
                 metadataCache[metadataCacheKey] = metadata;
 
                 if (config.DownloadTrailersLocally)
@@ -399,19 +413,25 @@ namespace ComingSoonPlugin.ScheduledTasks
                 calendarItem.TmdbId, calendarItem.TvdbId);
             var entryDir = Path.Combine(libraryDataPath, folderName);
 
-            var posterUrl = metadata.PosterUrl ?? calendarItem.PosterUrl;
-            if (!string.IsNullOrWhiteSpace(posterUrl))
+            // Artwork of the same title in the user's own libraries wins: it's what they already
+            // chose for it, e.g. the series poster for an upcoming episode.
+            var ownArtwork = libraryArtwork?.Find(calendarItem);
+            var imagesChanged = false;
+
+            var posterSource = ownArtwork?.Poster ?? metadata.PosterUrl ?? calendarItem.PosterUrl;
+            if (!string.IsNullOrWhiteSpace(posterSource))
             {
-                await imageOverlayService.DownloadAndBadgeAsync(
-                    posterUrl, calendarItem.Date, entryDir, cancellationToken,
+                imagesChanged |= await imageOverlayService.DownloadAndBadgeAsync(
+                    posterSource, calendarItem.Date, entryDir, cancellationToken,
                     calendarItem.SeasonNumber, calendarItem.EpisodeNumber, badgeKind,
                     calendarItem.DateRegionLabel)
                     .ConfigureAwait(false);
             }
 
-            if (!string.IsNullOrWhiteSpace(metadata.BackdropUrl))
+            var backdropSource = ownArtwork?.Backdrop ?? metadata.BackdropUrl;
+            if (!string.IsNullOrWhiteSpace(backdropSource))
             {
-                await imageOverlayService.DownloadBackdropAsync(metadata.BackdropUrl, entryDir, cancellationToken, badgeKind)
+                imagesChanged |= await imageOverlayService.DownloadBackdropAsync(backdropSource, entryDir, cancellationToken, badgeKind)
                     .ConfigureAwait(false);
             }
 
@@ -432,6 +452,7 @@ namespace ComingSoonPlugin.ScheduledTasks
                 EpisodeNumber = calendarItem.EpisodeNumber,
                 EpisodeTitle = calendarItem.EpisodeTitle,
                 TrailerIsMainVideo = trailerIsMainVideo,
+                ImagesChanged = imagesChanged,
                 Cast = metadata.Cast
             };
         }

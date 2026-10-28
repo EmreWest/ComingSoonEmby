@@ -73,6 +73,8 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             badgePositionLabel: "Badge position",
             badgePositionDescription: "Which corner the status badge sits in. The release date always stays bottom-right; if the badge shares that corner it sits above the date.",
             badgePosOptions: { TopLeft: "Top left", TopRight: "Top right", BottomLeft: "Bottom left", BottomRight: "Bottom right" },
+            useLibraryArtworkLabel: "Use artwork from my Emby libraries",
+            useLibraryArtworkDescription: "If a title is already in one of your libraries (e.g. the series of an upcoming episode), its poster and backdrop are used. Otherwise posters are downloaded in the language set for the title in Radarr/Sonarr (profile language), falling back to the badge language.",
             saveButton: "Save",
             testingText: "Testing…",
             unknownResult: "Unknown result",
@@ -157,6 +159,8 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             badgePositionLabel: "Badge-Position",
             badgePositionDescription: "In welcher Ecke der Status-Badge sitzt. Das Datum bleibt immer unten rechts; teilt sich der Badge diese Ecke, sitzt er über dem Datum.",
             badgePosOptions: { TopLeft: "Oben links", TopRight: "Oben rechts", BottomLeft: "Unten links", BottomRight: "Unten rechts" },
+            useLibraryArtworkLabel: "Cover aus meinen Emby-Bibliotheken verwenden",
+            useLibraryArtworkDescription: "Ist ein Titel bereits in einer deiner Bibliotheken (z.B. die Serie einer kommenden Episode), werden dessen Poster und Hintergrundbild verwendet. Sonst werden Poster in der Sprache geladen, die in Radarr/Sonarr für den Titel eingestellt ist (Profilsprache), ersatzweise in der Badge-Sprache.",
             saveButton: "Speichern",
             testingText: "Teste…",
             unknownResult: "Unbekanntes Ergebnis",
@@ -234,6 +238,8 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
                 opt.textContent = s.badgePosOptions[opt.value] || opt.value;
             });
             view.querySelector('#CsBadgePositionDescription').textContent = s.badgePositionDescription;
+            view.querySelector('#CsUseLibraryArtworkLabel').textContent = s.useLibraryArtworkLabel;
+            view.querySelector('#CsUseLibraryArtworkDescription').textContent = s.useLibraryArtworkDescription;
 
             view.querySelector('#CsSaveButtonLabel').textContent = s.saveButton;
 
@@ -642,6 +648,7 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
                 currentLanguage = config.Language || 'English';
                 view.querySelector('#Language').value = currentLanguage;
                 view.querySelector('#BadgePosition').value = config.BadgePosition || 'TopLeft';
+                view.querySelector('#UseLibraryArtwork').checked = config.UseLibraryArtwork !== false;
                 applyStaticText();
 
                 currentInstances.Sonarr = instancesFromConfig(config, 'Sonarr');
@@ -695,6 +702,7 @@ define(["emby-input", "emby-button", "emby-checkbox", "emby-select"], function (
             config.TmdbApiKey = view.querySelector('#TmdbApiKey').value;
             config.Language = view.querySelector('#Language').value;
             config.BadgePosition = view.querySelector('#BadgePosition').value;
+            config.UseLibraryArtwork = view.querySelector('#UseLibraryArtwork').checked;
 
             config.DaysAhead = parseInt(view.querySelector('#DaysAhead').value, 10);
             config.DownloadTrailersLocally = view.querySelector('#DownloadTrailersLocally').checked;

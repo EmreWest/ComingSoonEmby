@@ -78,11 +78,17 @@ namespace ComingSoonPlugin
         {
             var ns = GetType().Namespace;
 
+            // EnableInMainMenu also lists the page in the Dashboard sidebar (server section), so it
+            // can be opened without going through Plugins.
             yield return new PluginPageInfo
             {
                 Name = "ComingSoon",
+                DisplayName = "Coming Soon",
                 EmbeddedResourcePath = string.Format("{0}.Configuration.configPage.html", ns),
-                IsMainConfigPage = true
+                IsMainConfigPage = true,
+                EnableInMainMenu = true,
+                MenuSection = "server",
+                MenuIcon = "theaters"
             };
 
             yield return new PluginPageInfo

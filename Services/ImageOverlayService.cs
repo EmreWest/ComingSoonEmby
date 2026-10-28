@@ -22,7 +22,9 @@ namespace ComingSoonPlugin.Services
     /// {outputDirectory}/backdrop.jpg for the home-screen hero image. The pristine source image
     /// is cached in a hidden file and only ever downloaded once, but the badge overlay is
     /// re-rendered from that cache on every call, so date/season/language/list changes show up
-    /// on the next refresh without any extra network traffic.
+    /// on the next refresh without any extra network traffic. The cache is replaced when the
+    /// source changes (another language, artwork from the user's own library, or that library
+    /// image itself being changed).
     /// </summary>
     public class ImageOverlayService
     {
@@ -54,8 +56,13 @@ namespace ComingSoonPlugin.Services
             _badgePosition = badgePosition;
         }
 
-        public async Task<string?> DownloadAndBadgeAsync(
-            string posterUrl,
+        /// <summary>
+        /// Renders poster.jpg from posterSource (an http(s) URL or a local file, e.g. an Emby
+        /// library image). Returns true if a new source image was fetched, so Emby must re-read
+        /// the entry's images.
+        /// </summary>
+        public async Task<bool> DownloadAndBadgeAsync(
+            string posterSource,
             DateTime releaseDate,
             string outputDirectory,
             CancellationToken cancellationToken,
@@ -68,10 +75,10 @@ namespace ComingSoonPlugin.Services
             var sourcePath = Path.Combine(outputDirectory, ".poster-source.jpg");
             var outputPath = Path.Combine(outputDirectory, "poster.jpg");
 
-            if (!File.Exists(sourcePath)
-                && !await DownloadToFileAsync(posterUrl, sourcePath, cancellationToken).ConfigureAwait(false))
+            var (available, changed) = await EnsureSourceAsync(posterSource, sourcePath, cancellationToken).ConfigureAwait(false);
+            if (!available)
             {
-                return null;
+                return false;
             }
 
             try
@@ -101,12 +108,12 @@ namespace ComingSoonPlugin.Services
                 }
 
                 await image.SaveAsJpegAsync(outputPath, cancellationToken).ConfigureAwait(false);
-                return outputPath;
+                return changed;
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to badge poster from {Path}", sourcePath);
-                return null;
+                return changed;
             }
         }
 
@@ -115,28 +122,28 @@ namespace ComingSoonPlugin.Services
         /// hero image. A release-specific badge (IN CINEMAS / ON DISC / DIGITAL) is drawn on it;
         /// the generic "Upcoming" kind is left off so plain rows keep a clean hero image.
         /// </summary>
-        public async Task<string?> DownloadBackdropAsync(
-            string backdropUrl, string outputDirectory, CancellationToken cancellationToken,
+        public async Task<bool> DownloadBackdropAsync(
+            string backdropSource, string outputDirectory, CancellationToken cancellationToken,
             ReleaseBadgeKind badgeKind = ReleaseBadgeKind.Upcoming)
         {
             Directory.CreateDirectory(outputDirectory);
             var sourcePath = Path.Combine(outputDirectory, ".backdrop-source.jpg");
             var outputPath = Path.Combine(outputDirectory, "backdrop.jpg");
 
-            if (!File.Exists(sourcePath)
-                && !await DownloadToFileAsync(backdropUrl, sourcePath, cancellationToken).ConfigureAwait(false))
+            var (available, changed) = await EnsureSourceAsync(backdropSource, sourcePath, cancellationToken).ConfigureAwait(false);
+            if (!available)
             {
-                return null;
+                return false;
             }
 
             if (badgeKind == ReleaseBadgeKind.Upcoming)
             {
-                if (!File.Exists(outputPath))
+                if (changed || !File.Exists(outputPath))
                 {
                     File.Copy(sourcePath, outputPath, overwrite: true);
                 }
 
-                return outputPath;
+                return changed;
             }
 
             try
@@ -150,12 +157,12 @@ namespace ComingSoonPlugin.Services
                 }
 
                 await image.SaveAsJpegAsync(outputPath, cancellationToken).ConfigureAwait(false);
-                return outputPath;
+                return changed;
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to badge backdrop from {Path}", sourcePath);
-                return null;
+                return changed;
             }
         }
 
@@ -176,6 +183,66 @@ namespace ComingSoonPlugin.Services
             var culture = System.Globalization.CultureInfo.GetCultureInfo(
                 _language == ComingSoonLanguage.German ? "de-DE" : "en-US");
             return date.ToString(_language == ComingSoonLanguage.German ? "d. MMM" : "MMM d", culture);
+        }
+
+        /// <summary>
+        /// Makes sure sourcePath holds the image from source. The identity of what was fetched
+        /// (URL, or local path plus modification time) is kept next to it, so the cached copy is
+        /// replaced when the source changes. If fetching fails, an existing copy is kept.
+        /// </summary>
+        private async Task<(bool Available, bool Changed)> EnsureSourceAsync(
+            string source, string sourcePath, CancellationToken cancellationToken)
+        {
+            var isLocal = !source.StartsWith("http", StringComparison.OrdinalIgnoreCase);
+            var identity = isLocal ? $"{source}|{File.GetLastWriteTimeUtc(source).Ticks}" : source;
+            var identityPath = sourcePath + ".from";
+
+            if (File.Exists(sourcePath) && File.Exists(identityPath) && File.ReadAllText(identityPath) == identity)
+            {
+                return (true, false);
+            }
+
+            var tempPath = sourcePath + ".download";
+            bool fetched;
+            if (isLocal)
+            {
+                try
+                {
+                    File.Copy(source, tempPath, overwrite: true);
+                    fetched = true;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to copy image from {Path}", source);
+                    fetched = false;
+                }
+            }
+            else
+            {
+                fetched = await DownloadToFileAsync(source, tempPath, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (!fetched)
+            {
+                TryDelete(tempPath);
+                return (File.Exists(sourcePath), false);
+            }
+
+            File.Move(tempPath, sourcePath, overwrite: true);
+            File.WriteAllText(identityPath, identity);
+            return (true, true);
+        }
+
+        private void TryDelete(string path)
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not delete {Path}", path);
+            }
         }
 
         private async Task<bool> DownloadToFileAsync(string url, string destinationPath, CancellationToken cancellationToken)

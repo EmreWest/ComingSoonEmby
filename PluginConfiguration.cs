@@ -136,6 +136,12 @@ namespace ComingSoonPlugin
         /// <summary>Badge text and fetched Overview/plot language.</summary>
         public ComingSoonLanguage Language { get; set; } = ComingSoonLanguage.English;
 
+        /// <summary>
+        /// For titles that already exist in another Emby library (e.g. a series with a new
+        /// episode coming), use that item's poster and backdrop instead of downloading new ones.
+        /// </summary>
+        public bool UseLibraryArtwork { get; set; } = true;
+
         /// <summary>Which corner the status badge (UPCOMING / IN CINEMAS / ...) is drawn in.</summary>
         public BadgeCorner BadgePosition { get; set; } = BadgeCorner.TopLeft;
 
