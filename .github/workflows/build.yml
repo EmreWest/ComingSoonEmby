@@ -1,0 +1,71 @@
+name: Build plugin
+
+# Every push and pull request builds ComingSoonPlugin.dll as a workflow artifact. Pushing a tag
+# v<version> (matching <Version> in ComingSoonPlugin.csproj) also publishes a GitHub release with
+# the DLL attached and the matching changelog.json entry as release notes.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # The Emby SDK assemblies the plugin compiles against. 4.9.5 isn't published on NuGet, so they
+  # are taken from the matching official server image.
+  EMBY_VERSION: 4.9.5.0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the release on tags
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Fetch Emby SDK assemblies
+        run: |
+          mkdir -p lib
+          id=$(docker create "emby/embyserver:$EMBY_VERSION")
+          for name in Common Controller Model; do
+            docker cp "$id:/system/MediaBrowser.$name.dll" lib/
+          done
+          docker rm "$id"
+
+      - name: Check tag matches project version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          project=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' ComingSoonPlugin.csproj)
+          tag=${GITHUB_REF_NAME#v}
+          if [ "$project" != "$tag" ] && [ "$project" != "$tag.0" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match <Version>$project</Version> in ComingSoonPlugin.csproj"
+            exit 1
+          fi
+
+      - name: Build
+        run: dotnet build ComingSoonPlugin.csproj -c Release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ComingSoonPlugin
+          path: bin/Release/net8.0/ComingSoonPlugin.dll
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          jq -r --arg v "$version" \
+            '.[] | select((.Version // .version) == $v) | (.Notes // .notes)[] | "- " + .' \
+            Configuration/changelog.json > notes.md
+          {
+            echo
+            echo "Built against Emby Server $EMBY_VERSION. Copy \`ComingSoonPlugin.dll\` into the Emby \`plugins\` folder and restart Emby."
+          } >> notes.md
+          gh release create "$GITHUB_REF_NAME" bin/Release/net8.0/ComingSoonPlugin.dll \
+            --title "Coming Soon for Emby $version" --notes-file notes.md
